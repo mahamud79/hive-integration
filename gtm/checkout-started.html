@@ -1,0 +1,143 @@
+<!--
+  GTM Custom HTML tag:  "Hive - Checkout Started (API)"
+  Replaces the old SDK "Hive - Checkout Started" tag.
+
+  Fires a status:"started" order to YOUR collector in real time the moment a guest
+  has a valid email + (any) details on the checkout page - including RETURNING USERS
+  whose fields are pre-filled by the browser (no button click required), and
+  regardless of marketing opt-in.
+
+  Trigger: checkout page view / DOM Ready on the checkout path (or the begin_checkout event).
+  IMPORTANT: set COLLECTOR_URL to your deployed collector base URL (https).
+-->
+<script>
+(function () {
+  var COLLECTOR_URL = 'https://YOUR-COLLECTOR-DOMAIN'; // <-- CHANGE ME
+  var ENDPOINT = COLLECTOR_URL + '/collect/order';
+
+  function val(sel) { var el = document.querySelector(sel); return el ? (el.value || '').trim() : ''; }
+  function getEmail() { return val('input[type="email"]'); }
+  function getFirst() { return val('input[name*="first"]') || val('input[placeholder*="First"]'); }
+  function getLast()  { return val('input[name*="last"]')  || val('input[placeholder*="Last"]'); }
+  function getOptIn() {
+    var cb = document.querySelector('input[type="checkbox"][name="consent_to_marketing_emails"]');
+    return cb ? !!cb.checked : false;
+  }
+
+  function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function load(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+
+  // One stable order id per checkout session (reused by the purchase tag).
+  function orderId() {
+    var id = load('hive_order_id');
+    if (!id) {
+      id = 'order_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      store('hive_order_id', id);
+    }
+    return id;
+  }
+
+  // Pull the latest begin_checkout ecommerce object from the dataLayer.
+  function checkoutEcom() {
+    var dl = window.dataLayer || [];
+    for (var i = dl.length - 1; i >= 0; i--) {
+      if (dl[i] && dl[i].event === 'begin_checkout' && dl[i].ecommerce) return dl[i].ecommerce;
+    }
+    return null;
+  }
+
+  function buildEvent(item) {
+    var date = item.item_date || '';
+    var country = item.item_brand ? String(item.item_brand).replace('Bingo Loco ', '').trim() : '';
+    return {
+      name: item.item_name || document.title,
+      start_at: date ? date + 'T18:00:00Z' : new Date().toISOString(),
+      end_at: date ? date + 'T23:00:00Z' : undefined,
+      url: document.referrer || location.href,
+      venue: {
+        name: (item.item_name ? String(item.item_name).split(' - ')[0] : '') || item.item_name || 'Venue',
+        city: item.item_category3 || '',
+        country: country
+      }
+    };
+  }
+
+  function buildPayload() {
+    var email = getEmail();
+    if (!email || email.indexOf('@') < 1) return null; // need a usable email to attribute
+
+    var ec = checkoutEcom();
+    var item = (ec && ec.items && ec.items[0]) ? ec.items[0] : {};
+    var event = buildEvent(item);
+
+    // Persist event + identity so the purchase tag reuses the SAME event_id and email.
+    store('hive_event', JSON.stringify(event));
+    store('hive_email', email);
+    store('hive_first', getFirst());
+    store('hive_last', getLast());
+
+    return {
+      status: 'started',
+      order_id: orderId(),
+      event: event,
+      user: {
+        email: email,
+        first_name: getFirst(),
+        last_name: getLast(),
+        is_email_opt_in: getOptIn() // ACTUAL consent value, not hardcoded true
+      },
+      items: [{
+        item_id: item.item_id || 'item_1',
+        tier_name: item.item_name || 'General Admission',
+        price: Number(item.price || (ec && ec.value) || 0),
+        quantity: Number(item.quantity || 1)
+      }],
+      value: Number((ec && ec.value) || item.price || 0)
+    };
+  }
+
+  // Only send when meaningful data changes (respects Hive's rate limits; upsert keeps it one order).
+  var lastSig = '';
+  function send() {
+    var payload = buildPayload();
+    if (!payload) return;
+    var u = payload.user;
+    var sig = u.email + '|' + u.first_name + '|' + u.last_name + '|' + u.is_email_opt_in;
+    if (sig === lastSig) return;
+    lastSig = sig;
+    try {
+      fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+        mode: 'cors'
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  var timer;
+  function schedule() { clearTimeout(timer); timer = setTimeout(send, 700); }
+
+  // 1) Live entry: typing, field changes, leaving a field.
+  document.addEventListener('input', schedule, true);
+  document.addEventListener('change', schedule, true);
+  document.addEventListener('blur', schedule, true);
+
+  // 2) Returning users with PRE-FILLED fields: check on load + a few retries (no click needed).
+  function initialCheck() { if (getEmail()) send(); }
+  if (document.readyState !== 'loading') initialCheck();
+  document.addEventListener('DOMContentLoaded', initialCheck);
+  [600, 1500, 3000].forEach(function (ms) { setTimeout(initialCheck, ms); });
+
+  // 3) Chrome/Edge autofill detection via a CSS animation hook (fires even without focus).
+  var style = document.createElement('style');
+  style.textContent =
+    '@keyframes hiveAutofillStart { from { opacity: 0.99; } to { opacity: 1; } }' +
+    'input:-webkit-autofill { animation-name: hiveAutofillStart; animation-duration: 0.001s; }';
+  document.head.appendChild(style);
+  document.addEventListener('animationstart', function (e) {
+    if (e.animationName === 'hiveAutofillStart') schedule();
+  }, true);
+})();
+</script>

@@ -1,0 +1,94 @@
+<!--
+  GTM Custom HTML tag:  "Hive - Placed Order (API)"
+  Replaces the old SDK "Hive - placed order" tag.
+
+  Upgrades the abandoned-cart order to a completed purchase, reusing the SAME order_id
+  and event (so the event_id matches and Hive upserts instead of duplicating).
+
+  Trigger: the purchase event / order confirmation page.
+  IMPORTANT: set COLLECTOR_URL to the same value as the checkout-started tag.
+-->
+<script>
+(function () {
+  var COLLECTOR_URL = 'https://YOUR-COLLECTOR-DOMAIN'; // <-- CHANGE ME (same as checkout tag)
+  var ENDPOINT = COLLECTOR_URL + '/collect/order';
+
+  function load(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+  function val(sel) { var el = document.querySelector(sel); return el ? (el.value || '').trim() : ''; }
+
+  var orderId = load('hive_order_id') || ('order_' + Date.now());
+
+  // Purchase ecommerce from the dataLayer.
+  var dl = window.dataLayer || [];
+  var ec = null;
+  for (var i = dl.length - 1; i >= 0; i--) {
+    if (dl[i] && dl[i].event === 'purchase' && dl[i].ecommerce) { ec = dl[i].ecommerce; break; }
+  }
+  if (!ec) return;
+
+  var items = (ec.items && ec.items.length) ? ec.items : [{}];
+  var firstItem = items[0] || {};
+
+  // Prefer the event captured at checkout (guarantees identical event_id); else rebuild.
+  var event;
+  try { event = JSON.parse(load('hive_event')); } catch (e) { event = null; }
+  if (!event) {
+    var date = firstItem.item_date || '';
+    var country = firstItem.item_brand ? String(firstItem.item_brand).replace('Bingo Loco ', '').trim() : '';
+    event = {
+      name: firstItem.item_name || document.title,
+      start_at: date ? date + 'T18:00:00Z' : new Date().toISOString(),
+      end_at: date ? date + 'T23:00:00Z' : undefined,
+      url: location.href,
+      venue: {
+        name: (firstItem.item_name ? String(firstItem.item_name).split(' - ')[0] : '') || 'Venue',
+        city: firstItem.item_category3 || '',
+        country: country
+      }
+    };
+  }
+
+  // Identify the purchaser: page field, dataLayer, or the email stored at checkout.
+  var email = val('input[type="email"]') || ec.email || load('hive_email');
+  if (!email) return; // collector requires email or phone to attribute the order
+
+  var payload = {
+    status: 'completed',
+    order_id: orderId,
+    event: event,
+    user: {
+      email: email,
+      first_name: load('hive_first') || undefined,
+      last_name: load('hive_last') || undefined
+    },
+    items: items.map(function (it, idx) {
+      return {
+        item_id: it.item_id || ('item_' + (idx + 1)),
+        tier_name: it.item_name || 'General Admission',
+        price: Number(it.price || 0),
+        quantity: Number(it.quantity || 1)
+      };
+    }),
+    value: Number(ec.value || 0)
+  };
+
+  try {
+    fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+      mode: 'cors'
+    }).then(function () {
+      // Clean up so the next checkout starts fresh.
+      try {
+        localStorage.removeItem('hive_order_id');
+        localStorage.removeItem('hive_event');
+        localStorage.removeItem('hive_email');
+        localStorage.removeItem('hive_first');
+        localStorage.removeItem('hive_last');
+      } catch (e) {}
+    }).catch(function () {});
+  } catch (e) {}
+})();
+</script>
