@@ -27,6 +27,8 @@ src/
   diagnose.js     preflight check for the invalid_client error
   push-event.js   test: POST /events
   push-order.js   test: POST /orders (started + completed)
+  order-builder.js  normalizes a browser payload into Hive event + order
+  server.js       HTTP collector (the GTM/browser endpoint -> Hive)
 ```
 
 ## Setup
@@ -50,10 +52,44 @@ npm run test:event            # POST /events  (expect 202)
 npm run test:order            # POST /orders, status "started" (abandoned cart)
 npm run test:order completed  # same order_id + event_id -> upsert to completed
 npm run refresh               # manually refresh the access token
+npm start                     # run the HTTP collector (the GTM/browser endpoint)
 ```
 
 A `202` means "received and queued". Data appears in Hive asynchronously — usually
 minutes, **up to 1 hour during beta**.
+
+## The collector (`npm start`)
+
+This is the server your storefront/GTM calls. It holds the OAuth tokens and forwards
+to Hive server-side, so secrets never touch the browser. Routes:
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET`  | `/health` | liveness check |
+| `POST` | `/collect/order` | upsert the event, then push the order (started = abandoned cart, completed = purchase) |
+| `POST` | `/collect/event` | upsert an event only |
+
+Example — abandoned cart (status `started`):
+
+```bash
+curl -X POST http://localhost:8787/collect/order \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "status": "started",
+    "order_id": "order_1718900000000",
+    "event": {
+      "name": "Chelsea Theatre",
+      "start_at": "2026-07-15T18:00:00Z",
+      "url": "https://bingoloco.ca/experiences/chelsea-theatre",
+      "venue": { "name": "Chelsea Theatre", "city": "Toronto", "country": "Canada" }
+    },
+    "user": { "email": "guest@example.com", "first_name": "Sam", "is_email_opt_in": false },
+    "items": [{ "tier_name": "General Admission", "price": 25.0, "quantity": 2 }]
+  }'
+```
+
+The same call with `"status": "completed"` and the **same `order_id`** upgrades it to a
+purchase. Set `COLLECTOR_ALLOWED_ORIGIN` in `.env` to your storefront origin in production.
 
 ## How this fixes the three reported problems
 

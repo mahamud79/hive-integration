@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "start": "node --env-file=.env src/server.js",
     "authorize": "node --env-file=.env src/authorize.js",
     "diagnose": "node --env-file=.env src/diagnose.js",
     "refresh": "node --env-file=.env src/refresh.js",
