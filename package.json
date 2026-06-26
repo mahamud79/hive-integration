@@ -1,0 +1,17 @@
+{
+  "name": "hive-integration",
+  "version": "1.0.0",
+  "description": "Backend collector for pushing events/orders to the Hive API (OAuth2 Authorization Code + PKCE).",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "authorize": "node --env-file=.env src/authorize.js",
+    "diagnose": "node --env-file=.env src/diagnose.js",
+    "refresh": "node --env-file=.env src/refresh.js",
+    "test:event": "node --env-file=.env src/push-event.js",
+    "test:order": "node --env-file=.env src/push-order.js"
+  }
+}
