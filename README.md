@@ -120,3 +120,26 @@ produces the same id, so no event id needs to be stored in your database.
    autofill detection) and fire the `started` order in real time.
 3. Backfill scripts for the two CSVs (re-push orders with correct `event_id`; coordinate
    with Hive to remove the old name-keyed events).
+
+
+## Deploying the collector (Render)
+
+The collector must run on a public HTTPS URL for the browser/GTM to reach it.
+
+1. Push this repo to GitHub (done) and create a Render **Web Service** from it.
+2. Build command: `npm install` (there are no deps, but Render expects it). Start command: `npm start`.
+3. Set environment variables in Render (from `.env.example`): `HIVE_CLIENT_ID`,
+   `HIVE_CLIENT_SECRET`, `HIVE_AUTHORIZE_URL`, `HIVE_TOKEN_URL`, `HIVE_API_BASE`,
+   `HIVE_SCOPES`, `COLLECTOR_ALLOWED_ORIGIN`, and
+   `HIVE_REDIRECT_URI=https://YOUR-APP.onrender.com/oauth/callback`.
+4. Register that same `https://YOUR-APP.onrender.com/oauth/callback` as a redirect URI
+   in the Hive Partner Portal.
+5. Authorize the server: open `https://YOUR-APP.onrender.com/oauth/start` in your
+   browser, log into Hive, approve. Tokens are saved server-side.
+6. Point the GTM tags' `COLLECTOR_URL` at `https://YOUR-APP.onrender.com`.
+
+### Token persistence note
+Tokens are written to `tokens.json` (or `TOKENS_FILE`). On Render's **free** tier the
+disk is ephemeral and the service sleeps when idle, so tokens are lost on restart and
+you'd re-run `/oauth/start`. For production, attach a **persistent disk** and set
+`TOKENS_FILE=/data/tokens.json`, or move token storage to an external store.

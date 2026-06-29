@@ -3,7 +3,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TOKENS_PATH = path.join(__dirname, '..', 'tokens.json');
+// Allow overriding the token file location (e.g. a mounted persistent disk on
+// a host). Defaults to tokens.json in the project root.
+const TOKENS_PATH = process.env.TOKENS_FILE
+  ? path.resolve(process.env.TOKENS_FILE)
+  : path.join(__dirname, '..', 'tokens.json');
 
 // Persist the token set. We store an absolute expiry timestamp so we can
 // refresh proactively instead of waiting for a 401.

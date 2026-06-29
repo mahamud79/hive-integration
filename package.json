@@ -5,10 +5,11 @@
   "type": "module",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=20.18.0"
   },
   "scripts": {
-    "start": "node --env-file=.env src/server.js",
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --env-file=.env src/server.js",
     "authorize": "node --env-file=.env src/authorize.js",
     "diagnose": "node --env-file=.env src/diagnose.js",
     "refresh": "node --env-file=.env src/refresh.js",
