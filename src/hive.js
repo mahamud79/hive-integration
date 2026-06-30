@@ -5,7 +5,7 @@ const { HIVE_API_BASE, HIVE_CLIENT_ID } = process.env;
 
 // Returns a valid access token, refreshing proactively if it has expired.
 async function getAccessToken() {
-  let tokens = loadTokens();
+  let tokens = await loadTokens();
   if (isExpired(tokens)) {
     console.log('Access token expired - refreshing...');
     tokens = await refreshTokens();

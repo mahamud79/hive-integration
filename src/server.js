@@ -147,7 +147,7 @@ const server = http.createServer(async (req, res) => {
     pkceStore.delete(state);
     try {
       const tokens = await exchangeCodeForTokens(code, entry.verifier);
-      saveTokens(tokens);
+      await saveTokens(tokens);
       return sendHtml(res, 200, '<h1>Authorized!</h1><p>Tokens saved. The collector is ready.</p>');
     } catch (e) {
       return sendHtml(res, 500, '<h1>Token exchange failed</h1><pre>' + e.message + '</pre>');
@@ -156,7 +156,8 @@ const server = http.createServer(async (req, res) => {
 
   // ---- health / status ----
   if (req.method === 'GET' && (reqPath === '/health' || reqPath === '/')) {
-    return sendJson(res, 200, { ok: true, authorized: tokensExist() });
+    const authorized = await tokensExist();
+    return sendJson(res, 200, { ok: true, authorized });
   }
 
   // ---- collector endpoints (CORS) ----

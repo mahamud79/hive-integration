@@ -117,7 +117,7 @@ function main() {
 
     try {
       const tokens = await exchangeCodeForTokens(code, codeVerifier);
-      saveTokens(tokens);
+      await saveTokens(tokens);
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<h1>Success!</h1><p>Tokens saved. You can close this tab and return to the terminal.</p>');
       console.log('');

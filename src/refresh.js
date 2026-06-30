@@ -6,7 +6,7 @@ const { HIVE_CLIENT_ID, HIVE_CLIENT_SECRET, HIVE_TOKEN_URL } = process.env;
 // Hive ROTATES refresh tokens: each refresh returns a NEW refresh token that
 // we must persist, or the next refresh will fail and force re-authorization.
 export async function refreshTokens() {
-  const current = loadTokens();
+  const current = await loadTokens();
   if (!current.refresh_token) {
     throw new Error('No refresh_token stored. Run "npm run authorize" again.');
   }
@@ -32,7 +32,7 @@ export async function refreshTokens() {
     );
   }
 
-  return saveTokens(JSON.parse(text));
+  return await saveTokens(JSON.parse(text));
 }
 
 // Allow running directly: `npm run refresh`

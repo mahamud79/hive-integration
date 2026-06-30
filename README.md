@@ -140,6 +140,8 @@ The collector must run on a public HTTPS URL for the browser/GTM to reach it.
 
 ### Token persistence note
 Tokens are written to `tokens.json` (or `TOKENS_FILE`). On Render's **free** tier the
-disk is ephemeral and the service sleeps when idle, so tokens are lost on restart and
-you'd re-run `/oauth/start`. For production, attach a **persistent disk** and set
-`TOKENS_FILE=/data/tokens.json`, or move token storage to an external store.
+disk is ephemeral and the service sleeps when idle, so a file-based token is lost on
+restart and you'd re-run `/oauth/start`. Two durable options:
+- **Free:** set `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` (a free Upstash
+  Redis database). Tokens are then stored in Redis and survive restarts/sleeps.
+- **Paid:** attach a Render **persistent disk** and set `TOKENS_FILE=/data/tokens.json`.
