@@ -131,6 +131,8 @@ const server = http.createServer(async (req, res) => {
       ['code_challenge_method', 'S256'],
       ['state', state],
     ];
+    // Optional: some beta partner grants require the brand/tour id on first auth.
+    if (process.env.HIVE_TOUR_ID) params.push(['tour_id', process.env.HIVE_TOUR_ID]);
     const qs = params.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
     res.writeHead(302, { Location: HIVE_AUTHORIZE_URL + '?' + qs });
     return res.end();
