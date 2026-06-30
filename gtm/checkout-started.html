@@ -46,13 +46,18 @@
     return null;
   }
 
+  function isUuid(v) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v || '');
+  }
+
   function buildEvent(item) {
     var date = item.item_date || '';
+    var time = item.item_time || '18:00:00';
     var country = item.item_brand ? String(item.item_brand).replace('Bingo Loco ', '').trim() : '';
-    return {
+    var ev = {
       name: item.item_name || document.title,
-      start_at: date ? date + 'T18:00:00Z' : new Date().toISOString(),
-      end_at: date ? date + 'T23:00:00Z' : undefined,
+      start_at: date ? (date + 'T' + time + 'Z') : new Date().toISOString(),
+      end_at: date ? (date + 'T23:00:00Z') : undefined,
       url: document.referrer || location.href,
       venue: {
         name: (item.item_name ? String(item.item_name).split(' - ')[0] : '') || item.item_name || 'Venue',
@@ -60,6 +65,11 @@
         country: country
       }
     };
+    // Easol's ticketed_event_id is exposed in the dataLayer as item_id (a UUID).
+    // Use it as the canonical Hive event_id; the collector falls back to a
+    // name+date slug only if this is absent.
+    if (isUuid(item.item_id)) ev.event_id = item.item_id;
+    return ev;
   }
 
   function buildPayload() {

@@ -34,11 +34,15 @@
   try { event = JSON.parse(load('hive_event')); } catch (e) { event = null; }
   if (!event) {
     var date = firstItem.item_date || '';
+    var time = firstItem.item_time || '18:00:00';
     var country = firstItem.item_brand ? String(firstItem.item_brand).replace('Bingo Loco ', '').trim() : '';
+    var isUuid = function (v) {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v || '');
+    };
     event = {
       name: firstItem.item_name || document.title,
-      start_at: date ? date + 'T18:00:00Z' : new Date().toISOString(),
-      end_at: date ? date + 'T23:00:00Z' : undefined,
+      start_at: date ? (date + 'T' + time + 'Z') : new Date().toISOString(),
+      end_at: date ? (date + 'T23:00:00Z') : undefined,
       url: location.href,
       venue: {
         name: (firstItem.item_name ? String(firstItem.item_name).split(' - ')[0] : '') || 'Venue',
@@ -46,6 +50,7 @@
         country: country
       }
     };
+    if (isUuid(firstItem.item_id)) event.event_id = firstItem.item_id;
   }
 
   // Identify the purchaser: page field, dataLayer, or the email stored at checkout.

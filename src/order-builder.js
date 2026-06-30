@@ -17,7 +17,9 @@ export function buildEventPayload(ev) {
 
   const city = ev.venue && ev.venue.city ? ev.venue.city : undefined;
   const event = {
-    event_id: buildEventId(ev.name, ev.start_at, city),
+    // Prefer the explicit event id (Easol's ticketed_event_id / dataLayer item_id UUID);
+    // fall back to a deterministic slug only when it's missing.
+    event_id: isNonEmpty(ev.event_id) ? ev.event_id : buildEventId(ev.name, ev.start_at, city),
     name: ev.name,
     event_url: ev.url,
     start_at: ev.start_at,
@@ -58,7 +60,7 @@ export function buildOrderPayload(input) {
   }
 
   const city = event.venue && event.venue.city ? event.venue.city : undefined;
-  const event_id = buildEventId(event.name, event.start_at, city);
+  const event_id = isNonEmpty(event.event_id) ? event.event_id : buildEventId(event.name, event.start_at, city);
 
   // Normalize items; the live API REQUIRES item_id on each line item.
   let normItems;
