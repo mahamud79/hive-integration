@@ -10,7 +10,7 @@
 -->
 <script>
 (function () {
-  var COLLECTOR_URL = 'https://hive-collector.onrender.com'; // <-- your deployed collector (same as checkout tag)
+  var COLLECTOR_URL = 'https://hive-collector.onrender.com';
   var ENDPOINT = COLLECTOR_URL + '/collect/order';
 
   function load(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
