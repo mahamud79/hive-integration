@@ -201,5 +201,5 @@ server.listen(PORT, () => {
   console.log('  POST /collect/order    status "started" = abandoned cart, "completed" = purchase');
   console.log('  POST /collect/event    upsert an event only');
   console.log('  GET  /health           { ok, authorized }');
-  console.log('Allowed CORS origin: ' + ALLOWED_ORIGIN);
+  console.log('Allowed CORS origins: ' + ALLOWED_ORIGINS.join(', '));
 });
