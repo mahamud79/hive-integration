@@ -173,7 +173,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ---- collector endpoints (CORS) ----
-  setCors(res);
+  setCors(res, req.headers.origin);
   if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
 
   if (req.method === 'POST' && (reqPath === '/collect/order' || reqPath === '/collect/event')) {
