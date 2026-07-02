@@ -14,7 +14,9 @@ import { pushEvents, pushOrders } from './hive.js';
 import { buildEventPayload, buildOrderPayload, ValidationError } from './order-builder.js';
 
 const PORT = Number(process.env.PORT || 8787);
-const ALLOWED_ORIGIN = process.env.COLLECTOR_ALLOWED_ORIGIN || '*';
+const ALLOWED_ORIGINS = (process.env.COLLECTOR_ALLOWED_ORIGIN || '*')
+  .split(',')
+  .map(o => o.trim());
 const MAX_BODY_BYTES = 256 * 1024;
 
 const {
@@ -35,11 +37,19 @@ function rememberPkce(state, verifier) {
   pkceStore.set(state, { verifier, ts: Date.now() });
 }
 
-function setCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Access-Control-Max-Age', '86400');
+function setCors(res, reqOrigin) {
+  let allow = '*';
+  if (!ALLOWED_ORIGINS.includes('*')) {
+    const ok = ALLOWED_ORIGINS.some(o => {
+      if (o.startsWith('*.')) {
+        return reqOrigin && reqOrigin.endsWith(o.slice(1));
+      }
+      return reqOrigin === o;
+    });
+    allow = ok ? reqOrigin : ALLOWED_ORIGINS[0];
+  }
+  res.setHeader('Access-Control-Allow-Origin', allow);
+  res.setHeader('Vary', 'Origin');
 }
 
 function sendJson(res, status, obj) {
