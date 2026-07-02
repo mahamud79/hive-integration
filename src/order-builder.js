@@ -95,8 +95,8 @@ export function buildOrderPayload(input) {
       first_name: user.first_name,
       last_name: user.last_name,
       // reflect the ACTUAL consent value; defaults to null if not provided
-      is_email_opt_in: typeof user.is_email_opt_in === 'boolean' ? user.is_email_opt_in : null,
-    },
+      is_email_opt_in: typeof user.is_email_opt_in === 'boolean' ? user.is_email_opt_in 
+    : false,
     items: normItems,
     created_at: isNonEmpty(input.created_at) ? input.created_at : now,
     updated_at: now,
