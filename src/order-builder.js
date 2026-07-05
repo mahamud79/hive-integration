@@ -94,6 +94,7 @@ export function buildOrderPayload(input) {
       phone_number: user.phone_number,
       first_name: user.first_name,
       last_name: user.last_name,
+      // default to false (safe/compliant) when consent is unknown; Hive rejects null
       is_email_opt_in: typeof user.is_email_opt_in === 'boolean' ? user.is_email_opt_in : false,
     },
     items: normItems,
