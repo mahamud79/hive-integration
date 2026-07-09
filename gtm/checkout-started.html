@@ -1,18 +1,10 @@
 <!--
-  GTM Custom HTML tag:  "Hive - Checkout Started (API)"
-  Replaces the old SDK "Hive - Checkout Started" tag.
-
-  Fires a status:"started" order to YOUR collector in real time the moment a guest
-  has a valid email + (any) details on the checkout page - including RETURNING USERS
-  whose fields are pre-filled by the browser (no button click required), and
-  regardless of marketing opt-in.
-
-  Trigger: checkout page view / DOM Ready on the checkout path (or the begin_checkout event).
-  IMPORTANT: set COLLECTOR_URL to your deployed collector base URL (https).
+  GTM Custom HTML tag: "Hive - Checkout Started (API)"
+  Fires status:"started" order to the collector in real time.
 -->
 <script>
 (function () {
-  var COLLECTOR_URL = 'https://hive-collector.onrender.com'; // <-- your deployed collector
+  var COLLECTOR_URL = 'https://hive-collector.onrender.com';
   var ENDPOINT = COLLECTOR_URL + '/collect/order';
 
   function val(sel) { var el = document.querySelector(sel); return el ? (el.value || '').trim() : ''; }
@@ -27,7 +19,6 @@
   function store(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
   function load(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
 
-  // One stable order id per checkout session (reused by the purchase tag).
   function orderId() {
     var id = load('hive_order_id');
     if (!id) {
@@ -37,7 +28,6 @@
     return id;
   }
 
-  // Pull the latest begin_checkout ecommerce object from the dataLayer.
   function checkoutEcom() {
     var dl = window.dataLayer || [];
     for (var i = dl.length - 1; i >= 0; i--) {
@@ -53,9 +43,7 @@
   function buildEvent(item) {
     var date = item.item_date || '';
     var country = item.item_brand ? String(item.item_brand).replace('Bingo Loco ', '').trim() : '';
-    return {
-      // Use Easol's ticketed_event_id UUID (dataLayer item_id) as the canonical event id
-      event_id: item.item_id || undefined,
+    var ev = {
       name: item.item_name || document.title,
       start_at: date ? date + 'T18:00:00Z' : new Date().toISOString(),
       end_at: date ? date + 'T23:00:00Z' : undefined,
@@ -66,23 +54,18 @@
         country: country
       }
     };
-  }
-    // Easol's ticketed_event_id is exposed in the dataLayer as item_id (a UUID).
-    // Use it as the canonical Hive event_id; the collector falls back to a
-    // name+date slug only if this is absent.
     if (isUuid(item.item_id)) ev.event_id = item.item_id;
     return ev;
   }
 
   function buildPayload() {
     var email = getEmail();
-    if (!email || email.indexOf('@') < 1) return null; // need a usable email to attribute
+    if (!email || email.indexOf('@') < 1) return null;
 
     var ec = checkoutEcom();
     var item = (ec && ec.items && ec.items[0]) ? ec.items[0] : {};
     var event = buildEvent(item);
 
-    // Persist event + identity so the purchase tag reuses the SAME event_id and email.
     store('hive_event', JSON.stringify(event));
     store('hive_email', email);
     store('hive_first', getFirst());
@@ -96,7 +79,7 @@
         email: email,
         first_name: getFirst(),
         last_name: getLast(),
-        is_email_opt_in: getOptIn() // ACTUAL consent value, not hardcoded true
+        is_email_opt_in: getOptIn()
       },
       items: [{
         item_id: item.item_id || 'item_1',
@@ -108,7 +91,6 @@
     };
   }
 
-  // Only send when meaningful data changes (respects Hive's rate limits; upsert keeps it one order).
   var lastSig = '';
   function send() {
     var payload = buildPayload();
@@ -131,18 +113,15 @@
   var timer;
   function schedule() { clearTimeout(timer); timer = setTimeout(send, 700); }
 
-  // 1) Live entry: typing, field changes, leaving a field.
   document.addEventListener('input', schedule, true);
   document.addEventListener('change', schedule, true);
   document.addEventListener('blur', schedule, true);
 
-  // 2) Returning users with PRE-FILLED fields: check on load + a few retries (no click needed).
   function initialCheck() { if (getEmail()) send(); }
   if (document.readyState !== 'loading') initialCheck();
   document.addEventListener('DOMContentLoaded', initialCheck);
   [600, 1500, 3000].forEach(function (ms) { setTimeout(initialCheck, ms); });
 
-  // 3) Chrome/Edge autofill detection via a CSS animation hook (fires even without focus).
   var style = document.createElement('style');
   style.textContent =
     '@keyframes hiveAutofillStart { from { opacity: 0.99; } to { opacity: 1; } }' +
