@@ -1,20 +1,17 @@
-<!--
-  GTM Custom HTML tag: "Hive - Checkout Started (API)"
-  Fires status:"started" order to the collector in real time.
--->
 <script>
-(function () {
-  (function() {
-  // Only run on checkout pages (adjust path if your checkout URL is different)
+(function() {
+  // 1. PATH CHECK: Only run on checkout pages
   try {
     var path = (window.location && window.location.pathname) ? window.location.pathname.toLowerCase() : '';
     if (path.indexOf('/checkout') === -1 && path.indexOf('/cart/checkout') === -1) return;
   } catch (e) {
     return;
   }
+
   var COLLECTOR_URL = 'https://hive-collector.onrender.com';
   var ENDPOINT = COLLECTOR_URL + '/collect/order';
 
+  // 2. DOM HELPERS
   function val(sel) { var el = document.querySelector(sel); return el ? (el.value || '').trim() : ''; }
   function getEmail() { return val('input[type="email"]'); }
   function getFirst() { return val('input[name*="first"]') || val('input[placeholder*="First"]'); }
@@ -66,6 +63,7 @@
     return ev;
   }
 
+  // 3. PAYLOAD GENERATION
   function buildPayload() {
     var email = getEmail();
     if (!email || email.indexOf('@') < 1) return null;
@@ -99,6 +97,7 @@
     };
   }
 
+  // 4. SEND LOGIC
   var lastSig = '';
   function send() {
     var payload = buildPayload();
@@ -118,6 +117,7 @@
     } catch (e) {}
   }
 
+  // 5. EVENT LISTENERS
   var timer;
   function schedule() { clearTimeout(timer); timer = setTimeout(send, 700); }
 
@@ -130,6 +130,7 @@
   document.addEventListener('DOMContentLoaded', initialCheck);
   [600, 1500, 3000].forEach(function (ms) { setTimeout(initialCheck, ms); });
 
+  // 6. AUTOFILL SUPPORT
   var style = document.createElement('style');
   style.textContent =
     '@keyframes hiveAutofillStart { from { opacity: 0.99; } to { opacity: 1; } }' +
@@ -138,5 +139,6 @@
   document.addEventListener('animationstart', function (e) {
     if (e.animationName === 'hiveAutofillStart') schedule();
   }, true);
+
 })();
 </script>
