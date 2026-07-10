@@ -21,6 +21,8 @@ async function getAccessToken() {
 export async function hiveRequest(method, path, body, _retried = false) {
   const accessToken = await getAccessToken();
 
+  console.log('HIVE OUTGOING /events:', JSON.stringify(body, null, 2));
+
   const res = await fetch(`${HIVE_API_BASE}${path}`, {
     method,
     headers: {
