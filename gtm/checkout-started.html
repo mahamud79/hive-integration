@@ -4,6 +4,14 @@
 -->
 <script>
 (function () {
+  (function() {
+  // Only run on checkout pages (adjust path if your checkout URL is different)
+  try {
+    var path = (window.location && window.location.pathname) ? window.location.pathname.toLowerCase() : '';
+    if (path.indexOf('/checkout') === -1 && path.indexOf('/cart/checkout') === -1) return;
+  } catch (e) {
+    return;
+  }
   var COLLECTOR_URL = 'https://hive-collector.onrender.com';
   var ENDPOINT = COLLECTOR_URL + '/collect/order';
 
