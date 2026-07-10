@@ -38,17 +38,25 @@ function rememberPkce(state, verifier) {
 }
 
 function setCors(res, reqOrigin) {
-  let allow = '*';
-  if (!ALLOWED_ORIGINS.includes('*')) {
+  let allow = ALLOWED_ORIGINS[0] || '*';
+  
+  if (ALLOWED_ORIGINS.includes('*')) {
+    allow = '*';
+  } else if (reqOrigin) {
+    const cleanOrigin = reqOrigin.replace(/^https?:\/\//, '');
     const ok = ALLOWED_ORIGINS.some(o => {
-      if (o.startsWith('*.')) {
-        return reqOrigin && reqOrigin.endsWith(o.slice(1));
+      const cleanAllowed = o.replace(/^https?:\/\//, '');
+      if (cleanAllowed.startsWith('*.')) {
+        return cleanOrigin.endsWith(cleanAllowed.slice(2)) || cleanOrigin === cleanAllowed.slice(2);
       }
-      return reqOrigin === o;
+      return cleanOrigin === cleanAllowed;
     });
-    allow = ok ? reqOrigin : ALLOWED_ORIGINS[0];
+    if (ok) allow = reqOrigin;
   }
+
   res.setHeader('Access-Control-Allow-Origin', allow);
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Vary', 'Origin');
 }
 
