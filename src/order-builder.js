@@ -89,18 +89,21 @@ export function buildOrderPayload(input) {
     order_id,
     event_id,
     status,
-    user: {
-      email: user.email,
-      phone_number: user.phone_number,
-      first_name: user.first_name,
-      last_name: user.last_name,
-      // default to false (safe/compliant) when consent is unknown; Hive rejects null
-      is_email_opt_in: typeof user.is_email_opt_in === 'boolean' ? user.is_email_opt_in : false,
-    },
+    user: {},
     items: normItems,
     created_at: isNonEmpty(input.created_at) ? input.created_at : now,
     updated_at: now,
   };
+
+  // Only add user fields if they actually have data
+  if (isNonEmpty(user.email)) order.user.email = user.email.trim();
+  if (isNonEmpty(user.phone_number)) order.user.phone_number = user.phone_number.trim();
+  if (isNonEmpty(user.first_name)) order.user.first_name = user.first_name.trim();
+  if (isNonEmpty(user.last_name)) order.user.last_name = user.last_name.trim();
+  
+  // Hive requires this to be a boolean, never null/undefined
+  order.user.is_email_opt_in = (user.is_email_opt_in === true);
+
   if (status === 'completed') order.purchased_at = now;
 
   // Drop undefined user subfields so we don't send empty keys.
