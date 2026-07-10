@@ -12,6 +12,26 @@ function isNonEmpty(v) {
  * @param {object} ev { name, start_at, end_at, url, timezone, venue, tiers }
  */
 export function buildEventPayload(ev) {
+  if (!isNonEmpty(ev.name)) {
+    if (isNonEmpty(ev.url)) {
+      try {
+        const path = new URL(ev.url).pathname.replace(/\/+$/, '');
+        const slug = path ? decodeURIComponent(path.split('/').pop()).replace(/[-_]/g, ' ') : '';
+        ev.name = isNonEmpty(slug) ? slug : 'Event';
+      } catch (e) {
+        ev.name = 'Event';
+      }
+    } else {
+      ev.name = 'Event';
+    }
+  }
+
+  // If start_at missing or empty, default to now (ISO 8601)
+  if (!isNonEmpty(ev.start_at)) {
+    ev.start_at = new Date().toISOString();
+  }
+  // --- End fallbacks ---
+  
   if (!ev || !isNonEmpty(ev.name)) throw new ValidationError('event.name is required');
   if (!isNonEmpty(ev.start_at)) throw new ValidationError('event.start_at is required (ISO 8601)');
 
