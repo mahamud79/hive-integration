@@ -63,10 +63,12 @@
     return ev;
   }
 
-  // 3. PAYLOAD GENERATION
+  // 3. PAYLOAD GENERATION (with stricter email validation)
   function buildPayload() {
     var email = getEmail();
-    if (!email || email.indexOf('@') < 1) return null;
+    // stricter email validation to avoid partial / malformed addresses
+    var emailIsValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '');
+    if (!emailIsValid) return null;
 
     var ec = checkoutEcom();
     var item = (ec && ec.items && ec.items[0]) ? ec.items[0] : {};
@@ -117,9 +119,9 @@
     } catch (e) {}
   }
 
-  // 5. EVENT LISTENERS
+  // 5. EVENT LISTENERS (longer debounce to wait for autofill/typing)
   var timer;
-  function schedule() { clearTimeout(timer); timer = setTimeout(send, 700); }
+  function schedule() { clearTimeout(timer); timer = setTimeout(send, 1400); }
 
   document.addEventListener('input', schedule, true);
   document.addEventListener('change', schedule, true);
