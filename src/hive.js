@@ -18,45 +18,129 @@ async function getAccessToken() {
  * - Accepts either an array of event objects OR an array of { event: {...} } wrappers.
  * - Returns an array of event objects (no wrappers) and never mutates input objects.
  */
-function normalizeEventsForHive(items) {
-  return (items || []).map(item => {
-    try {
-      // Accept either item = { event: {...} } OR item = {...event fields...}
-      const src = (item && item.event) ? item.event : item || {};
-      const ev = Object.assign({}, src); // shallow clone to avoid mutating callers
+function normalizeString(value) {
+  if (Array.isArray(value)) {
+    const firstValue = value.find(
+      item => item !== null &&
+        item !== undefined &&
+        String(item).trim().length > 0
+    );
 
-      // Normalize event_url
-      if (Array.isArray(ev.event_url)) {
-        ev.event_url = ev.event_url.length ? String(ev.event_url[0]).trim() : undefined;
-      } else if (ev.event_url != null) {
-        ev.event_url = String(ev.event_url).trim() || undefined;
-      }
+    return firstValue !== undefined
+      ? String(firstValue).trim()
+      : undefined;
+  }
 
-      if (
-        ev.event_url &&
-        !/^https?:\/\//i.test(ev.event_url)
-      ) {
-        throw new Error('event_url must be a valid absolute HTTP/HTTPS URL');
-      }
-      // Normalize thumbnail_url
-      if (Array.isArray(ev.thumbnail_url)) {
-        ev.thumbnail_url = ev.thumbnail_url.length ? String(ev.thumbnail_url[0]).trim() : undefined;
-      } else if (ev.thumbnail_url != null) {
-        ev.thumbnail_url = String(ev.thumbnail_url).trim() || undefined;
-      }
+  if (value === null || value === undefined) {
+    return undefined;
+  }
 
-      // Ensure event_id is a string if present
-      if (ev.event_id != null) ev.event_id = String(ev.event_id).trim();
-
-      return ev;
-    } catch (err) {
-      console.error('normalizeEventsForHive error', err);
-      // Fall back to original item to avoid dropping events entirely
-      return (item && item.event) ? item.event : item;
-    }
-  });
+  const normalized = String(value).trim();
+  return normalized || undefined;
 }
 
+function validateHttpUrl(value, fieldName) {
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(value);
+  } catch {
+    throw new Error(`${fieldName} must be a valid absolute URL`);
+  }
+
+  if (
+    parsedUrl.protocol !== 'http:' &&
+    parsedUrl.protocol !== 'https:'
+  ) {
+    throw new Error(`${fieldName} must use HTTP or HTTPS`);
+  }
+
+  return parsedUrl;
+}
+
+/**
+ * Normalize and validate event objects before sending them to Hive.
+ *
+ * Important:
+ * - Invalid events throw an error.
+ * - Invalid events are never silently returned or sent to Hive.
+ * - Hive's documented image field is image_url.
+ */
+function normalizeEventsForHive(items) {
+  return (items || []).map((item, index) => {
+    const src = item && item.event
+      ? item.event
+      : item;
+
+    if (
+      !src ||
+      typeof src !== 'object' ||
+      Array.isArray(src)
+    ) {
+      throw new Error(`events[${index}] must be an event object`);
+    }
+
+    const ev = Object.assign({}, src);
+
+    ev.event_id = normalizeString(ev.event_id);
+    ev.name = normalizeString(ev.name);
+    ev.start_at = normalizeString(ev.start_at);
+    ev.event_url = normalizeString(ev.event_url);
+
+    if (!ev.event_id) {
+      throw new Error(`events[${index}].event_id is required`);
+    }
+
+    if (!ev.name) {
+      throw new Error(`events[${index}].name is required`);
+    }
+
+    if (!ev.start_at) {
+      throw new Error(`events[${index}].start_at is required`);
+    }
+
+    if (Number.isNaN(Date.parse(ev.start_at))) {
+      throw new Error(
+        `events[${index}].start_at must be a valid ISO 8601 date`
+      );
+    }
+
+    if (!ev.event_url) {
+      throw new Error(
+        `events[${index}].event_url is required`
+      );
+    }
+
+    const parsedEventUrl = validateHttpUrl(
+      ev.event_url,
+      `events[${index}].event_url`
+    );
+
+    // Reject a generic experiences-listing URL.
+    // Hive needs the public page for this individual event.
+    if (/\/experiences\/?$/i.test(parsedEventUrl.pathname)) {
+      throw new Error(
+        `events[${index}].event_url must be the full individual event URL`
+      );
+    }
+
+    // Accept either incoming name, but send Hive's documented field.
+    ev.image_url = normalizeString(
+      ev.image_url || ev.thumbnail_url
+    );
+
+    delete ev.thumbnail_url;
+
+    if (ev.image_url) {
+      validateHttpUrl(
+        ev.image_url,
+        `events[${index}].image_url`
+      );
+    }
+
+    return ev;
+  });
+}
 /**
  * Authenticated request to the Hive API.
  * Adds both required headers: Authorization + X-Partner-Id.
