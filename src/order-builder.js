@@ -12,88 +12,168 @@ function isNonEmpty(v) {
  * Build a Hive event object from the data the checkout page already has.
  * @param {object} ev { name, start_at, end_at, url, timezone, venue, tiers }
  */
+/**
+ * Build and validate the Hive event object.
+ *
+ * Expected input:
+ * {
+ *   event_id,
+ *   name,
+ *   start_at,
+ *   end_at,
+ *   url or event_url,
+ *   image_url or thumbnail_url,
+ *   timezone,
+ *   venue,
+ *   tiers
+ * }
+ */
 export function buildEventPayload(ev) {
-  if (!isNonEmpty(ev.name)) {
-    if (isNonEmpty(ev.url)) {
-      try {
-        const path = new URL(ev.url).pathname.replace(/\/+$/, '');
-        const slug = path ? decodeURIComponent(path.split('/').pop()).replace(/[-_]/g, ' ') : '';
-        ev.name = isNonEmpty(slug) ? slug : 'Event';
-      } catch (e) {
-        ev.name = 'Event';
-      }
-    } else {
-      ev.name = 'Event';
-    }
+  if (
+    !ev ||
+    typeof ev !== 'object' ||
+    Array.isArray(ev)
+  ) {
+    throw new ValidationError('event object is required');
   }
 
-  // If start_at missing or empty, default to now (ISO 8601)
-  if (!isNonEmpty(ev.start_at)) {
-    ev.start_at = new Date().toISOString();
-  }
-  // --- End fallbacks ---
-  
-  if (!ev || !isNonEmpty(ev.name)) throw new ValidationError('event.name is required');
-  if (!isNonEmpty(ev.start_at)) throw new ValidationError('event.start_at is required (ISO 8601)');
+  const name = isNonEmpty(ev.name)
+    ? ev.name.trim()
+    : '';
+
+  const startAt = isNonEmpty(ev.start_at)
+    ? ev.start_at.trim()
+    : '';
 
   const eventUrl = isNonEmpty(ev.event_url)
-  ? ev.event_url.trim()
-  : isNonEmpty(ev.url)
-    ? ev.url.trim()
-    : '';
+    ? ev.event_url.trim()
+    : isNonEmpty(ev.url)
+      ? ev.url.trim()
+      : '';
 
-if (!eventUrl) {
-  throw new ValidationError(
-    'event.url is required. The GTM checkout tag must send the full event page URL.'
-  );
-}
+  if (!name) {
+    throw new ValidationError(
+      'event.name is required'
+    );
+  }
 
-let parsedEventUrl;
+  if (!startAt) {
+    throw new ValidationError(
+      'event.start_at is required'
+    );
+  }
 
-try {
-  parsedEventUrl = new URL(eventUrl);
-} catch {
-  throw new ValidationError(
-    'event.url must be a valid absolute URL.'
-  );
-}
+  if (Number.isNaN(Date.parse(startAt))) {
+    throw new ValidationError(
+      'event.start_at must be a valid ISO 8601 date'
+    );
+  }
 
-if (
-  parsedEventUrl.protocol !== 'http:' &&
-  parsedEventUrl.protocol !== 'https:'
-) {
-  throw new ValidationError(
-    'event.url must use HTTP or HTTPS.'
-  );
-}
+  if (!eventUrl) {
+    throw new ValidationError(
+      'event.url is required. GTM must send the full event page URL.'
+    );
+  }
 
-const city = ev.venue && ev.venue.city
-  ? ev.venue.city
-  : undefined;
+  let parsedEventUrl;
 
-const event = {
-  event_id: isNonEmpty(ev.event_id)
+  try {
+    parsedEventUrl = new URL(eventUrl);
+  } catch {
+    throw new ValidationError(
+      'event.url must be a valid absolute URL'
+    );
+  }
+
+  if (
+    parsedEventUrl.protocol !== 'http:' &&
+    parsedEventUrl.protocol !== 'https:'
+  ) {
+    throw new ValidationError(
+      'event.url must use HTTP or HTTPS'
+    );
+  }
+
+  if (/\/experiences\/?$/i.test(parsedEventUrl.pathname)) {
+    throw new ValidationError(
+      'event.url must be the full individual event URL, not the generic experiences page'
+    );
+  }
+
+  const city =
+    ev.venue && isNonEmpty(ev.venue.city)
+      ? ev.venue.city.trim()
+      : undefined;
+
+  const eventId = isNonEmpty(ev.event_id)
     ? ev.event_id.trim()
-    : buildEventId(ev.name, ev.start_at, city),
-  name: ev.name,
-  event_url: eventUrl,
-  start_at: ev.start_at,
-  updated_at: new Date().toISOString(),
-};
-  
-  if (isNonEmpty(ev.end_at)) event.end_at = ev.end_at;
-  const thumbnailUrl = isNonEmpty(ev.thumbnail_url)
-  ? ev.thumbnail_url.trim()
-  : isNonEmpty(ev.image_url)
-    ? ev.image_url.trim()
-    : '';
+    : buildEventId(name, startAt, city);
 
-if (thumbnailUrl) {
-  event.thumbnail_url = thumbnailUrl;
-}
-  event.timezone = isNonEmpty(ev.timezone) ? ev.timezone : 'America/Toronto';
-  if (ev.venue && isNonEmpty(ev.venue.name)) event.venue = ev.venue;
-  if (Array.isArray(ev.tiers) && ev.tiers.length) event.tiers = ev.tiers;
+  const event = {
+    event_id: eventId,
+    name,
+    event_url: eventUrl,
+    start_at: startAt,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (isNonEmpty(ev.end_at)) {
+    event.end_at = ev.end_at.trim();
+  }
+
+  /*
+   * Hive's documented event image property is image_url.
+   * Accept thumbnail_url from GTM temporarily, but translate it.
+   */
+  const imageUrl = isNonEmpty(ev.image_url)
+    ? ev.image_url.trim()
+    : isNonEmpty(ev.thumbnail_url)
+      ? ev.thumbnail_url.trim()
+      : '';
+
+  if (imageUrl) {
+    let parsedImageUrl;
+
+    try {
+      parsedImageUrl = new URL(imageUrl);
+    } catch {
+      throw new ValidationError(
+        'event.image_url must be a valid absolute URL'
+      );
+    }
+
+    if (
+      parsedImageUrl.protocol !== 'http:' &&
+      parsedImageUrl.protocol !== 'https:'
+    ) {
+      throw new ValidationError(
+        'event.image_url must use HTTP or HTTPS'
+      );
+    }
+
+    event.image_url = imageUrl;
+  }
+
+  /*
+   * Never assume America/Toronto.
+   * Only include timezone when GTM sends the real event timezone.
+   */
+  if (isNonEmpty(ev.timezone)) {
+    event.timezone = ev.timezone.trim();
+  }
+
+  if (
+    ev.venue &&
+    typeof ev.venue === 'object' &&
+    isNonEmpty(ev.venue.name)
+  ) {
+    event.venue = Object.assign({}, ev.venue);
+  }
+
+  if (Array.isArray(ev.tiers) && ev.tiers.length) {
+    event.tiers = ev.tiers;
+  }
+
   return event;
 }
 
