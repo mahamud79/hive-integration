@@ -14,44 +14,44 @@ async function getAccessToken() {
 }
 
 /**
- * Normalizes event objects before sending to Hive to avoid validation 422s.
- * - If event.event_url is an array, take the first element and stringify.
- * - If event.event_url is missing or doesn't look like http(s), delete it.
- * - If thumbnail_url is an array, take first element; otherwise stringify/trim.
- * - Ensure event_id is a string.
+ * Safe normalization for event objects before sending to Hive.
+ * - Accepts either an array of event objects OR an array of { event: {...} } wrappers.
+ * - Returns an array of event objects (no wrappers) and never mutates input objects.
  */
-function normalizeEventsForHive(events) {
-  return (events || []).map(ev => {
+function normalizeEventsForHive(items) {
+  return (items || []).map(item => {
     try {
-      ev = ev || {};
-      ev.event = ev.event || ev || {}; // some callers pass event object directly
+      // Accept either item = { event: {...} } OR item = {...event fields...}
+      const src = (item && item.event) ? item.event : item || {};
+      const ev = Object.assign({}, src); // shallow clone to avoid mutating callers
 
       // Normalize event_url
-      if (Array.isArray(ev.event.event_url)) {
-        ev.event.event_url = ev.event.event_url.length ? String(ev.event.event_url[0]).trim() : '';
-      } else if (ev.event.event_url != null) {
-        ev.event.event_url = String(ev.event.event_url).trim();
+      if (Array.isArray(ev.event_url)) {
+        ev.event_url = ev.event_url.length ? String(ev.event_url[0]).trim() : undefined;
+      } else if (ev.event_url != null) {
+        ev.event_url = String(ev.event_url).trim() || undefined;
       }
 
       // Remove invalid or generic event_url to avoid Hive validation errors
-      if (!/^https?:\/\//i.test(ev.event.event_url || '') || /\/experiences\/?$/.test(ev.event.event_url || '')) {
-        delete ev.event.event_url;
+      if (ev.event_url && (!/^https?:\/\//i.test(ev.event_url) || /\/experiences\/?$/.test(ev.event_url))) {
+        delete ev.event_url;
       }
 
       // Normalize thumbnail_url
-      if (Array.isArray(ev.event.thumbnail_url)) {
-        ev.event.thumbnail_url = ev.event.thumbnail_url.length ? String(ev.event.thumbnail_url[0]).trim() : undefined;
-      } else if (ev.event.thumbnail_url != null) {
-        ev.event.thumbnail_url = String(ev.event.thumbnail_url).trim() || undefined;
+      if (Array.isArray(ev.thumbnail_url)) {
+        ev.thumbnail_url = ev.thumbnail_url.length ? String(ev.thumbnail_url[0]).trim() : undefined;
+      } else if (ev.thumbnail_url != null) {
+        ev.thumbnail_url = String(ev.thumbnail_url).trim() || undefined;
       }
 
       // Ensure event_id is a string if present
-      if (ev.event.event_id != null) ev.event.event_id = String(ev.event.event_id).trim();
+      if (ev.event_id != null) ev.event_id = String(ev.event_id).trim();
 
       return ev;
     } catch (err) {
-      console.error('normalizeEventsForHive error', err, ev && ev.event && ev.event.event_id);
-      return ev;
+      console.error('normalizeEventsForHive error', err);
+      // Fall back to original item to avoid dropping events entirely
+      return (item && item.event) ? item.event : item;
     }
   });
 }
@@ -64,7 +64,12 @@ function normalizeEventsForHive(events) {
 export async function hiveRequest(method, path, body, _retried = false) {
   const accessToken = await getAccessToken();
 
-  console.log('HIVE OUTGOING /events:', JSON.stringify(body, null, 2));
+  // Safe logging: guard against circular structures
+  try {
+    console.log('HIVE OUTGOING ' + path + ':', JSON.stringify(body, null, 2));
+  } catch (err) {
+    console.log('HIVE OUTGOING ' + path + ': <unserializable payload>');
+  }
 
   const res = await fetch(`${HIVE_API_BASE}${path}`, {
     method,
@@ -98,6 +103,7 @@ export async function hiveRequest(method, path, body, _retried = false) {
 
 /**
  * POST /events — create or update events (upsert by event_id).
+ * Expects an array of event objects (or wrappers). We'll normalize and send event objects.
  */
 export function pushEvents(events) {
   if (!Array.isArray(events) || events.length === 0) {
@@ -105,16 +111,13 @@ export function pushEvents(events) {
   }
   if (events.length > 50) throw new Error('pushEvents: max 50 items per batch');
 
-  // Normalize events to avoid sending arrays for event_url/thumbnail_url
   const normalized = normalizeEventsForHive(events);
   return hiveRequest('POST', '/events', { events: normalized });
 }
 
 /**
  * POST /orders — create or update orders (upsert by order_id).
- * Use status "started" for abandoned carts, "completed" for purchases.
- *
- * Orders include nested event objects in some callers; normalize any nested events.
+ * Normalize any nested order.event (if present) to avoid arrays/invalid URLs.
  */
 export function pushOrders(orders) {
   if (!Array.isArray(orders) || orders.length === 0) {
@@ -122,17 +125,16 @@ export function pushOrders(orders) {
   }
   if (orders.length > 50) throw new Error('pushOrders: max 50 items per batch');
 
-  // Normalize nested event objects inside orders if present (order.event or order.event.*)
   const ordersCopy = (orders || []).map(o => {
     try {
       const copy = JSON.parse(JSON.stringify(o)); // deep clone to avoid mutating callers
       if (copy.event) {
-        const [normalizedEvent] = normalizeEventsForHive([ { event: copy.event } ]);
-        copy.event = normalizedEvent && normalizedEvent.event ? normalizedEvent.event : copy.event;
+        const [normalizedEvent] = normalizeEventsForHive([copy.event]);
+        copy.event = normalizedEvent || copy.event;
       }
-      // Some orders may include items with event-like fields; we won't mutate items here.
       return copy;
     } catch (err) {
+      console.error('pushOrders: clone error', err);
       return o;
     }
   });
