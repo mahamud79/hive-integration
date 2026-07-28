@@ -205,7 +205,9 @@ export function buildOrderPayload(input) {
   }
 
   const city = event.venue && event.venue.city ? event.venue.city : undefined;
-  const event_id = isNonEmpty(event.event_id) ? event.event_id : buildEventId(event.name, event.start_at, city);
+  const event_id = isNonEmpty(event.event_id)
+  ? event.event_id.trim()
+  : buildEventId(event.name, event.start_at, city);
 
   // Normalize items; the live API REQUIRES item_id on each line item.
   let normItems;
@@ -231,7 +233,7 @@ export function buildOrderPayload(input) {
 
   const now = new Date().toISOString();
   const order = {
-    order_id,
+    order_id: order_id.trim(),
     event_id,
     status,
     user: {},
