@@ -175,6 +175,10 @@ export async function hiveRequest(method, path, body, _retried = false) {
     return hiveRequest(method, path, body, true);
   }
 
+  // Log the exact Hive response status for testing and monitoring.
+  console.log(`HIVE RESPONSE ${method} ${path}: ${res.status}`);
+
+
   // 202 Accepted = queued for async processing (this is success for ingestion).
   if (!res.ok) {
     const err = new Error(`Hive ${method} ${path} failed (${res.status})`);
