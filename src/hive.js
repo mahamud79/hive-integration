@@ -32,11 +32,12 @@ function normalizeEventsForHive(items) {
         ev.event_url = String(ev.event_url).trim() || undefined;
       }
 
-      // Remove invalid or generic event_url to avoid Hive validation errors
-      if (ev.event_url && (!/^https?:\/\//i.test(ev.event_url) || /\/experiences\/?$/.test(ev.event_url))) {
-        delete ev.event_url;
+      if (
+        ev.event_url &&
+        !/^https?:\/\//i.test(ev.event_url)
+      ) {
+        throw new Error('event_url must be a valid absolute HTTP/HTTPS URL');
       }
-
       // Normalize thumbnail_url
       if (Array.isArray(ev.thumbnail_url)) {
         ev.thumbnail_url = ev.thumbnail_url.length ? String(ev.thumbnail_url[0]).trim() : undefined;
