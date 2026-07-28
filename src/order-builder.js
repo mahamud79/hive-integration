@@ -1,6 +1,7 @@
 // Turns a normalized browser payload into Hive `event` and `order` objects,
 // applying the canonical event id so events and orders always line up.
 
+
 import { buildEventId } from './event-id.js';
 
 function isNonEmpty(v) {
@@ -35,17 +36,61 @@ export function buildEventPayload(ev) {
   if (!ev || !isNonEmpty(ev.name)) throw new ValidationError('event.name is required');
   if (!isNonEmpty(ev.start_at)) throw new ValidationError('event.start_at is required (ISO 8601)');
 
-  const city = ev.venue && ev.venue.city ? ev.venue.city : undefined;
-  const event = {
-    // Prefer the explicit event id (Easol's ticketed_event_id / dataLayer item_id UUID);
-    // fall back to a deterministic slug only when it's missing.
-    event_id: isNonEmpty(ev.event_id) ? ev.event_id : buildEventId(ev.name, ev.start_at, city),
-    name: ev.name,
-    event_url: ev.url,
-    start_at: ev.start_at,
-    updated_at: new Date().toISOString(),
-  };
+  const eventUrl = isNonEmpty(ev.event_url)
+  ? ev.event_url.trim()
+  : isNonEmpty(ev.url)
+    ? ev.url.trim()
+    : '';
+
+if (!eventUrl) {
+  throw new ValidationError(
+    'event.url is required. The GTM checkout tag must send the full event page URL.'
+  );
+}
+
+let parsedEventUrl;
+
+try {
+  parsedEventUrl = new URL(eventUrl);
+} catch {
+  throw new ValidationError(
+    'event.url must be a valid absolute URL.'
+  );
+}
+
+if (
+  parsedEventUrl.protocol !== 'http:' &&
+  parsedEventUrl.protocol !== 'https:'
+) {
+  throw new ValidationError(
+    'event.url must use HTTP or HTTPS.'
+  );
+}
+
+const city = ev.venue && ev.venue.city
+  ? ev.venue.city
+  : undefined;
+
+const event = {
+  event_id: isNonEmpty(ev.event_id)
+    ? ev.event_id.trim()
+    : buildEventId(ev.name, ev.start_at, city),
+  name: ev.name,
+  event_url: eventUrl,
+  start_at: ev.start_at,
+  updated_at: new Date().toISOString(),
+};
+  
   if (isNonEmpty(ev.end_at)) event.end_at = ev.end_at;
+  const thumbnailUrl = isNonEmpty(ev.thumbnail_url)
+  ? ev.thumbnail_url.trim()
+  : isNonEmpty(ev.image_url)
+    ? ev.image_url.trim()
+    : '';
+
+if (thumbnailUrl) {
+  event.thumbnail_url = thumbnailUrl;
+}
   event.timezone = isNonEmpty(ev.timezone) ? ev.timezone : 'America/Toronto';
   if (ev.venue && isNonEmpty(ev.venue.name)) event.venue = ev.venue;
   if (Array.isArray(ev.tiers) && ev.tiers.length) event.tiers = ev.tiers;
