@@ -125,18 +125,26 @@ function normalizeEventsForHive(items) {
     }
 
     // Accept either incoming name, but send Hive's documented field.
-    ev.image_url = normalizeString(
-      ev.image_url || ev.thumbnail_url
-    );
+    /*
+ * Hive event artwork is sent as `thumbnail_url`.
+ * Accept legacy `image_url` only as an input fallback,
+ * but never send `image_url` to Hive.
+ */
+ const thumbnailUrl =
+   normalizeString(ev.thumbnail_url) ||
+   normalizeString(ev.image_url);
 
-    delete ev.thumbnail_url;
+ delete ev.image_url;
+ delete ev.thumbnail_url;
 
-    if (ev.image_url) {
-      validateHttpUrl(
-        ev.image_url,
-        `events[${index}].image_url`
-      );
-    }
+ if (thumbnailUrl) {
+   validateHttpUrl(
+     thumbnailUrl,
+     `events[${index}].thumbnail_url`
+   );
+
+   ev.thumbnail_url = thumbnailUrl;
+ }
 
     return ev;
   });
