@@ -433,9 +433,50 @@ export function buildOrderPayload(input) {
       user.last_name.trim();
   }
 
-  // Hive requires a boolean, never null or undefined.
-  order.user.is_email_opt_in =
-    user.is_email_opt_in === true;
+  /*
+   * Email consent mapping — Hive-confirmed semantics.
+   *
+   *   checkbox selected      -> send is_email_opt_in: true
+   *   checkbox NOT selected  -> OMIT the field entirely
+   *
+   * Hive updates the contact's subscription state on BOTH true and
+   * false. Sending false for a simply-unchecked checkout box can
+   * unsubscribe an existing subscriber. Unchecked means "no decision
+   * made", not "unsubscribe".
+   *
+   * false is only ever sent when the caller explicitly flags a real
+   * unsubscribe action via user.email_opt_in_explicit === true.
+   *
+   * Replaces the previous behaviour, which always emitted a boolean
+   * and therefore sent false on every non-opted-in order.
+   */
+  const optInRaw =
+    user.is_email_opt_in !== undefined
+      ? user.is_email_opt_in
+      : user.email_opt_in;
+
+  const optedIn =
+    optInRaw === true ||
+    optInRaw === 'true' ||
+    optInRaw === 1 ||
+    optInRaw === '1';
+
+  const optedOut =
+    optInRaw === false ||
+    optInRaw === 'false' ||
+    optInRaw === 0 ||
+    optInRaw === '0';
+
+  if (optedIn) {
+    order.user.is_email_opt_in = true;
+  } else if (
+    optedOut &&
+    user.email_opt_in_explicit === true
+  ) {
+    // Genuine explicit unsubscribe action, not an unchecked box.
+    order.user.is_email_opt_in = false;
+  }
+  // Otherwise: field omitted, leaving Hive's existing state untouched.
 
   if (status === 'completed') {
     order.purchased_at = now;
