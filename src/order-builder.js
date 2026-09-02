@@ -136,6 +136,12 @@ export function buildEventPayload(ev) {
     );
   }
 
+  const sourceId = firstNonEmptyString(ev.event_id, ev.product_id);
+  const eventId = sourceId
+    ? buildOccurrenceId(sourceId, startAt)
+    : buildEventId(name, startAt, city);
+
+
   const name =
     firstNonEmptyString(ev.name);
 
@@ -280,6 +286,11 @@ export function buildOrderPayload(input) {
     'pending',
     'partial_payment',
   ];
+
+  const eventId = isNonEmpty(event.event_id)
+    ? buildOccurrenceId(event.event_id.trim(), event.start_at)
+    : buildEventId(event.name, event.start_at, city);
+
 
   if (!validStatuses.includes(status)) {
     throw new ValidationError(
