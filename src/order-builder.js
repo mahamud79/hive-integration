@@ -1,7 +1,7 @@
 // Turns a normalized browser payload into Hive `event` and `order` objects,
 // applying the canonical event id so events and orders always line up.
 
-import { buildEventId } from './event-id.js';
+import { buildEventId, buildOccurrenceId } from './event-id.js';
 
 function isNonEmpty(v) {
   return typeof v === 'string' && v.trim().length > 0;
@@ -136,12 +136,6 @@ export function buildEventPayload(ev) {
     );
   }
 
-  const sourceId = firstNonEmptyString(ev.event_id, ev.product_id);
-  const eventId = sourceId
-    ? buildOccurrenceId(sourceId, startAt)
-    : buildEventId(name, startAt, city);
-
-
   const name =
     firstNonEmptyString(ev.name);
 
@@ -180,13 +174,29 @@ export function buildEventPayload(ev) {
       ? ev.venue.city.trim()
       : undefined;
 
-  const eventId =
-    firstNonEmptyString(ev.event_id) ||
-    buildEventId(
-      name,
-      startAt,
-      city
-    );
+  /*
+   * Occurrence-level event id: source UUID + start date.
+   *
+   * Easol reuses one product-level UUID across every date of a
+   * recurring show, so the UUID alone collapses separate shows into a
+   * single Hive event. The date must therefore be part of the key.
+   *
+   * The name is deliberately NOT part of the key: the same show
+   * arrives under several name forms (with and without a trailing
+   * date suffix, with and without a theme prefix), which would split
+   * one occurrence across multiple ids.
+   *
+   * buildEventId (name + date) remains the fallback for payloads that
+   * carry no source id at all.
+   */
+  const sourceId = firstNonEmptyString(
+    ev.event_id,
+    ev.product_id
+  );
+
+  const eventId = sourceId
+    ? buildOccurrenceId(sourceId, startAt)
+    : buildEventId(name, startAt, city);
 
   const event = {
     event_id: eventId,
@@ -287,11 +297,6 @@ export function buildOrderPayload(input) {
     'partial_payment',
   ];
 
-  const eventId = isNonEmpty(event.event_id)
-    ? buildOccurrenceId(event.event_id.trim(), event.start_at)
-    : buildEventId(event.name, event.start_at, city);
-
-
   if (!validStatuses.includes(status)) {
     throw new ValidationError(
       'status must be one of: ' +
@@ -333,14 +338,22 @@ export function buildOrderPayload(input) {
       ? event.venue.city
       : undefined;
 
-  const eventId =
-    isNonEmpty(event.event_id)
-      ? event.event_id.trim()
-      : buildEventId(
-          event.name,
-          event.start_at,
-          city
-        );
+  /*
+   * Must derive identically to buildEventPayload, or orders will
+   * reference an event id that does not exist in Hive.
+   */
+  const sourceId = firstNonEmptyString(
+    event.event_id,
+    event.product_id
+  );
+
+  const eventId = sourceId
+    ? buildOccurrenceId(sourceId, event.start_at)
+    : buildEventId(
+        event.name,
+        event.start_at,
+        city
+      );
 
   // Normalize items; the live API requires item_id on every line item.
   let normalizedItems;
