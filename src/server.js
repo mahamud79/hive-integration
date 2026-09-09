@@ -677,6 +677,7 @@ const server =
         } catch (err) {
           queue = { error: err.message };
         }
+      }
 
         return sendJson(
           res,
@@ -696,16 +697,6 @@ const server =
         );
       }
 
-
-        let queue = null;
-
-        try {
-          queue = await queueDepth();
-        } catch (err) {
-          queue = { error: err.message };
-        }
-
-      }
 
       // -------------------------------------------------
       // Collector endpoints
