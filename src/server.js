@@ -38,8 +38,6 @@ import {
   queueDepth,
 } from './queue.js';
 
-
-
 const PORT = Number(
   process.env.PORT || 8787
 );
@@ -329,34 +327,54 @@ async function exchangeCodeForTokens(
 
 // -------------------------------------------------------
 // Collector handlers
+//
+// Validation runs inline so a genuinely bad payload still gets a
+// 422 immediately. Delivery to Hive goes through the Redis queue,
+// which retries 429s with backoff and survives restarts.
 // -------------------------------------------------------
+
+async function pushInline(event, order) {
+  const eventRes = await pushEvents([event]);
+  const orderRes = await pushOrders([order]);
+
+  return {
+    event_id: order.event_id,
+    order_id: order.order_id,
+    status: order.status,
+    queued: false,
+    hive: { event: eventRes.status, order: orderRes.status },
+  };
+}
 
 async function handleOrder(payload) {
   const event = buildEventPayload(payload.event);
   const order = buildOrderPayload(payload);
 
   if (!queueEnabled) {
-    const eventRes = await pushEvents([event]);
-    const orderRes = await pushOrders([order]);
+    return pushInline(event, order);
+  }
+
+  try {
+    const jobId = await enqueue('order', { event, order });
 
     return {
       event_id: order.event_id,
       order_id: order.order_id,
       status: order.status,
-      queued: false,
-      hive: { event: eventRes.status, order: orderRes.status },
+      queued: true,
+      job_id: jobId,
     };
+  } catch (err) {
+    /*
+     * Redis unreachable or over quota. Trying Hive directly is
+     * better than dropping a paid order on the floor.
+     */
+    console.error(
+      'Enqueue failed, pushing inline: ' + err.message
+    );
+
+    return pushInline(event, order);
   }
-
-  const jobId = await enqueue('order', { event, order });
-
-  return {
-    event_id: order.event_id,
-    order_id: order.order_id,
-    status: order.status,
-    queued: true,
-    job_id: jobId,
-  };
 }
 
 async function handleEvent(payload) {
@@ -372,13 +390,27 @@ async function handleEvent(payload) {
     };
   }
 
-  const jobId = await enqueue('event', event);
+  try {
+    const jobId = await enqueue('event', event);
 
-  return {
-    event_id: event.event_id,
-    queued: true,
-    job_id: jobId,
-  };
+    return {
+      event_id: event.event_id,
+      queued: true,
+      job_id: jobId,
+    };
+  } catch (err) {
+    console.error(
+      'Enqueue failed, pushing inline: ' + err.message
+    );
+
+    const response = await pushEvents([event]);
+
+    return {
+      event_id: event.event_id,
+      queued: false,
+      hive: { event: response.status },
+    };
+  }
 }
 
 const server =
@@ -659,11 +691,10 @@ const server =
       // Health/status
       // -------------------------------------------------
 
-            if (
+      if (
         req.method === 'GET' &&
         (
-          reqPath ===
-            '/health' ||
+          reqPath === '/health' ||
           reqPath === '/'
         )
       ) {
@@ -677,7 +708,6 @@ const server =
         } catch (err) {
           queue = { error: err.message };
         }
-      }
 
         return sendJson(
           res,
@@ -696,7 +726,6 @@ const server =
           }
         );
       }
-
 
       // -------------------------------------------------
       // Collector endpoints
@@ -817,6 +846,7 @@ server.listen(
   PORT,
   () => {
     startWorker();
+
     console.log(
       'Hive collector listening on port ' +
       PORT
@@ -839,7 +869,7 @@ server.listen(
     );
 
     console.log(
-      '  GET  /health           { ok, authorized, tour_configured }'
+      '  GET  /health           { ok, authorized, queue, tour_configured }'
     );
 
     console.log(
