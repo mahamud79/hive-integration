@@ -1,5 +1,6 @@
 import { loadTokens, isExpired } from './tokens.js';
 import { refreshTokens } from './refresh.js';
+import { schedule } from './limiter.js';
 
 const { HIVE_API_BASE, HIVE_CLIENT_ID } = process.env;
 
@@ -218,28 +219,19 @@ export async function hiveRequest(
     );
   }
 
-  const res = await fetch(
+    const res = await schedule(() => fetch(
     `${HIVE_API_BASE}${path}`,
     {
       method,
-
       headers: {
-        Authorization:
-          `Bearer ${accessToken}`,
-
-        'X-Partner-Id':
-          HIVE_CLIENT_ID,
-
-        'Content-Type':
-          'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'X-Partner-Id': HIVE_CLIENT_ID,
+        'Content-Type': 'application/json',
       },
-
-      body:
-        body
-          ? JSON.stringify(body)
-          : undefined,
+      body: body ? JSON.stringify(body) : undefined,
     }
-  );
+  ));
+
 
   const text =
     await res.text();
@@ -276,6 +268,14 @@ export async function hiveRequest(
     `HIVE RESPONSE ${method} ${path}: ${res.status}`
   );
 
+    console.log(
+    'HIVE LIMITS ' + path + ': limit=' +
+    res.headers.get('x-ratelimit-limit') +
+    ' remaining=' + res.headers.get('x-ratelimit-remaining') +
+    ' retry-after=' + res.headers.get('retry-after')
+  );
+
+
   /*
    * Hive ingestion commonly returns 202 Accepted.
    * Any 2xx response is considered successful here.
@@ -288,6 +288,9 @@ export async function hiveRequest(
 
     err.status =
       res.status;
+
+    err.retryAfter = res.headers.get('retry-after');
+
 
     err.response =
       data;
