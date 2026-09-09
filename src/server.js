@@ -659,7 +659,7 @@ const server =
       // Health/status
       // -------------------------------------------------
 
-      if (
+            if (
         req.method === 'GET' &&
         (
           reqPath ===
@@ -670,6 +670,14 @@ const server =
         const authorized =
           await tokensExist();
 
+        let queue = null;
+
+        try {
+          queue = await queueDepth();
+        } catch (err) {
+          queue = { error: err.message };
+        }
+
         return sendJson(
           res,
           200,
@@ -678,12 +686,16 @@ const server =
 
             authorized,
 
+            queue,
+
             tour_configured:
               Boolean(
                 HIVE_TOUR_ID
               ),
           }
         );
+      }
+
 
         let queue = null;
 
