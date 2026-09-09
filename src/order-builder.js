@@ -287,6 +287,7 @@ export function buildOrderPayload(input) {
     user,
     items,
     value,
+    currency,
   } = input || {};
 
   const validStatuses = [
