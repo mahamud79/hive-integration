@@ -272,7 +272,8 @@ export function buildEventPayload(ev) {
  *   event,
  *   user,
  *   items,
- *   value
+ *   value,
+ *   currency
  * }
  *
  * status:
@@ -436,9 +437,72 @@ export function buildOrderPayload(input) {
     updated_at: now,
   };
 
+  /*
+   * Currency. Without this every figure in Hive is unit-less, and a
+   * NOK sale is indistinguishable from a USD one. The GTM tag has
+   * been sending this field; it was simply being discarded here.
+   */
+  const currencyCode =
+    firstNonEmptyString(currency).toUpperCase();
+
+  if (/^[A-Z]{3}$/.test(currencyCode)) {
+    order.currency = currencyCode;
+  }
+
+  const orderTotal = Number(value);
+
+  const lineSum = order.items.reduce(
+    (sum, line) =>
+      sum +
+      (Number(line.price) || 0) *
+      (Number(line.quantity) || 1),
+    0
+  );
+
+  /*
+   * UK/EU checkouts price the ticket line at 0.00 and put the real
+   * money in add-ons, so without this Hive records a zero-value sale.
+   */
+  if (
+    lineSum === 0 &&
+    Number.isFinite(orderTotal) &&
+    orderTotal > 0
+  ) {
+    order.items[0].price = orderTotal;
+    order.items[0].quantity = 1;
+
+    console.warn(
+      'Zero-priced line items; using order total ' +
+      orderTotal +
+      ' for order ' +
+      order.order_id
+    );
+  }
+
+  if (
+    Number.isFinite(orderTotal) &&
+    orderTotal > 0
+  ) {
+    order.value = orderTotal;
+  }
+
   if (isNonEmpty(user.email)) {
-    order.user.email =
-      user.email.trim();
+    const cleanEmail =
+      user.email.trim().toLowerCase();
+
+    /*
+     * Hive batches are all-or-nothing, so one malformed address
+     * (the PP7-RWLH 422) can reject every order sent with it.
+     */
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)
+    ) {
+      throw new ValidationError(
+        'user.email is not a valid email address'
+      );
+    }
+
+    order.user.email = cleanEmail;
   }
 
   if (
@@ -459,7 +523,7 @@ export function buildOrderPayload(input) {
   }
 
   /*
-   * Email consent mapping — Hive-confirmed semantics.
+   * Email consent mapping - Hive-confirmed semantics.
    *
    *   checkbox selected      -> send is_email_opt_in: true
    *   checkbox NOT selected  -> OMIT the field entirely
@@ -471,9 +535,6 @@ export function buildOrderPayload(input) {
    *
    * false is only ever sent when the caller explicitly flags a real
    * unsubscribe action via user.email_opt_in_explicit === true.
-   *
-   * Replaces the previous behaviour, which always emitted a boolean
-   * and therefore sent false on every non-opted-in order.
    */
   const optInRaw =
     user.is_email_opt_in !== undefined
