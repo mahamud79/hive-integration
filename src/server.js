@@ -31,6 +31,15 @@ import {
   ValidationError,
 } from './order-builder.js';
 
+import {
+  enqueue,
+  startWorker,
+  queueEnabled,
+  queueDepth,
+} from './queue.js';
+
+
+
 const PORT = Number(
   process.env.PORT || 8787
 );
@@ -322,75 +331,53 @@ async function exchangeCodeForTokens(
 // Collector handlers
 // -------------------------------------------------------
 
-async function handleOrder(
-  payload
-) {
-  const event =
-    buildEventPayload(
-      payload.event
-    );
+async function handleOrder(payload) {
+  const event = buildEventPayload(payload.event);
+  const order = buildOrderPayload(payload);
 
-  const order =
-    buildOrderPayload(
-      payload
-    );
+  if (!queueEnabled) {
+    const eventRes = await pushEvents([event]);
+    const orderRes = await pushOrders([order]);
 
-  /*
-   * The event must exist in Hive before the
-   * ticketing order references it.
-   */
-  const eventRes =
-    await pushEvents([
-      event,
-    ]);
+    return {
+      event_id: order.event_id,
+      order_id: order.order_id,
+      status: order.status,
+      queued: false,
+      hive: { event: eventRes.status, order: orderRes.status },
+    };
+  }
 
-  const orderRes =
-    await pushOrders([
-      order,
-    ]);
+  const jobId = await enqueue('order', { event, order });
 
   return {
-    event_id:
-      order.event_id,
-
-    order_id:
-      order.order_id,
-
-    status:
-      order.status,
-
-    hive: {
-      event:
-        eventRes.status,
-
-      order:
-        orderRes.status,
-    },
+    event_id: order.event_id,
+    order_id: order.order_id,
+    status: order.status,
+    queued: true,
+    job_id: jobId,
   };
 }
 
-async function handleEvent(
-  payload
-) {
-  const event =
-    buildEventPayload(
-      payload.event ||
-      payload
-    );
+async function handleEvent(payload) {
+  const event = buildEventPayload(payload.event || payload);
 
-  const response =
-    await pushEvents([
-      event,
-    ]);
+  if (!queueEnabled) {
+    const response = await pushEvents([event]);
+
+    return {
+      event_id: event.event_id,
+      queued: false,
+      hive: { event: response.status },
+    };
+  }
+
+  const jobId = await enqueue('event', event);
 
   return {
-    event_id:
-      event.event_id,
-
-    hive: {
-      event:
-        response.status,
-    },
+    event_id: event.event_id,
+    queued: true,
+    job_id: jobId,
   };
 }
 
@@ -697,6 +684,15 @@ const server =
               ),
           }
         );
+
+        let queue = null;
+
+        try {
+          queue = await queueDepth();
+        } catch (err) {
+          queue = { error: err.message };
+        }
+
       }
 
       // -------------------------------------------------
@@ -817,6 +813,7 @@ const server =
 server.listen(
   PORT,
   () => {
+    startWorker();
     console.log(
       'Hive collector listening on port ' +
       PORT
