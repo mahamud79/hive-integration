@@ -39,13 +39,45 @@ async function redis(command) {
 
 // Records that we already pushed this event recently, so repeated
 // begin_checkout fires don't re-push identical events all day.
-async function markEventSent(eventId) {
-  const out = await redis([
-    'SET', 'hive_event_sent:' + eventId, '1', 'NX', 'EX', String(EVENT_TTL),
-  ]);
+// True when we have NOT pushed this event recently.
+async function needsEventPush(eventId) {
+  const out = await redis(['GET', 'hive_event_sent:' + eventId]);
 
-  return out.result === 'OK';
+  return out.result == null;
 }
+
+// Only called after Hive has accepted the event.
+async function markEventSent(eventId) {
+  await redis([
+    'SET', 'hive_event_sent:' + eventId, '1', 'EX', String(EVENT_TTL),
+  ]);
+}
+
+async function deliver(job) {
+  if (job.kind === 'event') {
+    if (!(await needsEventPush(job.data.event_id))) {
+      console.log('SKIP event (already sent recently) ' + job.data.event_id);
+      return;
+    }
+
+    await pushEvents([job.data]);
+    await markEventSent(job.data.event_id);
+    return;
+  }
+
+  // An order job carries both, and the event must land first.
+  const { event, order } = job.data;
+
+  if (event) {
+    if (await needsEventPush(event.event_id)) {
+      await pushEvents([event]);
+      await markEventSent(event.event_id);
+    }
+  }
+
+  await pushOrders([order]);
+}
+
 
 export async function enqueue(kind, data) {
   const job = {
@@ -63,33 +95,6 @@ export async function enqueue(kind, data) {
   console.log('QUEUED ' + kind + ' ' + job.id);
 
   return job.id;
-}
-
-async function deliver(job) {
-  if (job.kind === 'event') {
-    const fresh = await markEventSent(job.data.event_id);
-
-    if (!fresh) {
-      console.log('SKIP event (already sent recently) ' + job.data.event_id);
-      return;
-    }
-
-    await pushEvents([job.data]);
-    return;
-  }
-
-  // An order job carries both, and the event must land first.
-  const { event, order } = job.data;
-
-  if (event) {
-    const fresh = await markEventSent(event.event_id);
-
-    if (fresh) {
-      await pushEvents([event]);
-    }
-  }
-
-  await pushOrders([order]);
 }
 
 async function requeue(job, err) {
