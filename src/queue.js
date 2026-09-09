@@ -18,6 +18,33 @@ const TICK_MS = Number(process.env.HIVE_WORKER_TICK_MS || 1000);
 
 export const queueEnabled = Boolean(REDIS_URL && REDIS_TOKEN);
 
+  try {
+    const jobId = await enqueue('order', { event, order });
+
+    return {
+      event_id: order.event_id,
+      order_id: order.order_id,
+      status: order.status,
+      queued: true,
+      job_id: jobId,
+    };
+  } catch (err) {
+    // Redis down or over quota: better to try Hive inline than drop it.
+    console.error('Enqueue failed, pushing inline: ' + err.message);
+
+    const eventRes = await pushEvents([event]);
+    const orderRes = await pushOrders([order]);
+
+    return {
+      event_id: order.event_id,
+      order_id: order.order_id,
+      status: order.status,
+      queued: false,
+      hive: { event: eventRes.status, order: orderRes.status },
+    };
+  }
+
+
 async function redis(command) {
   const res = await fetch(REDIS_URL, {
     method: 'POST',
