@@ -166,6 +166,25 @@ for (const ev of eventList) {
   }
 }
 
+/*
+ * Historical payloads can carry the same clock skew that produced the
+ * 422s (updated_at earlier than created_at). replay bypasses
+ * order-builder, so clamp here too.
+ */
+for (const od of orderList) {
+  const c = Date.parse(od.created_at);
+  const u = Date.parse(od.updated_at);
+
+  if (Number.isFinite(c) && Number.isFinite(u) && u < c) {
+    od.updated_at = od.created_at;
+  }
+
+  if (od.purchased_at && Date.parse(od.purchased_at) < c) {
+    od.purchased_at = od.created_at;
+  }
+}
+
+
 for (const od of orderList) {
   try {
     const res = await withRetry(() => pushOrders([od]), 5);
