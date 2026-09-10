@@ -17,7 +17,12 @@ if (!filePath) {
   process.exit(1);
 }
 
-const raw = fs.readFileSync(filePath, 'utf8');
+const raw = fs
+  .readFileSync(filePath, 'utf8')
+  .replace(
+    /^\s*\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?Z?\s*/gm,
+    ''
+  );
 
 // Pull the balanced JSON object that follows a log marker.
 function extractJson(text, startIndex) {
