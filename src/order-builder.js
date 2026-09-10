@@ -568,6 +568,18 @@ export function buildOrderPayload(input) {
     order.purchased_at = now;
   }
 
+  const createdMs = Date.parse(order.created_at);
+  const updatedMs = Date.parse(order.updated_at);
+
+  if (
+    Number.isFinite(createdMs) &&
+    Number.isFinite(updatedMs) &&
+    updatedMs < createdMs
+  ) {
+    order.updated_at = order.created_at;
+  }
+  
+
   return order;
 }
 
