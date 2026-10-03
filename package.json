@@ -14,6 +14,7 @@
     "diagnose": "node --env-file=.env src/diagnose.js",
     "refresh": "node --env-file=.env src/refresh.js",
     "test:event": "node --env-file=.env src/push-event.js",
-    "test:order": "node --env-file=.env src/push-order.js"
+    "test:order": "node --env-file=.env src/push-order.js",
+    "replay": "node --env-file=.env src/replay.js"
   }
 }

@@ -19,6 +19,21 @@ export function slugify(value) {
     .replace(/^-+|-+$/g, '');           // trim leading/trailing hyphens
 }
 
+export function buildOccurrenceId(sourceId, startAt) {
+  if (!sourceId) throw new Error('buildOccurrenceId: sourceId is required');
+  if (!startAt) throw new Error('buildOccurrenceId: startAt is required');
+
+  // Already canonical (evt_<source>_<YYYY-MM-DD>) — idempotent.
+  if (/^evt_.+_\d{4}-\d{2}-\d{2}$/.test(String(sourceId))) return String(sourceId);
+
+  const date = String(startAt).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error('buildOccurrenceId: startAt must begin with YYYY-MM-DD');
+  }
+  return `evt_${slugify(sourceId)}_${date}`;
+}
+
+
 /**
  * Build the canonical event id.
  * @param {string} name      Event name, e.g. "Chelsea Theatre"
