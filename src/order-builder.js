@@ -1,133 +1,609 @@
 // Turns a normalized browser payload into Hive `event` and `order` objects,
 // applying the canonical event id so events and orders always line up.
 
-import { buildEventId } from './event-id.js';
+import { buildEventId, buildOccurrenceId } from './event-id.js';
 
 function isNonEmpty(v) {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
-/**
- * Build a Hive event object from the data the checkout page already has.
- * @param {object} ev { name, start_at, end_at, url, timezone, venue, tiers }
- */
-export function buildEventPayload(ev) {
-  if (!isNonEmpty(ev.name)) {
-    if (isNonEmpty(ev.url)) {
-      try {
-        const path = new URL(ev.url).pathname.replace(/\/+$/, '');
-        const slug = path ? decodeURIComponent(path.split('/').pop()).replace(/[-_]/g, ' ') : '';
-        ev.name = isNonEmpty(slug) ? slug : 'Event';
-      } catch (e) {
-        ev.name = 'Event';
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isNonEmpty(item)) {
+          return item.trim();
+        }
       }
-    } else {
-      ev.name = 'Event';
+
+      continue;
+    }
+
+    if (isNonEmpty(value)) {
+      return value.trim();
     }
   }
 
-  // If start_at missing or empty, default to now (ISO 8601)
-  if (!isNonEmpty(ev.start_at)) {
-    ev.start_at = new Date().toISOString();
-  }
-  // --- End fallbacks ---
-  
-  if (!ev || !isNonEmpty(ev.name)) throw new ValidationError('event.name is required');
-  if (!isNonEmpty(ev.start_at)) throw new ValidationError('event.start_at is required (ISO 8601)');
+  return '';
+}
 
-  const city = ev.venue && ev.venue.city ? ev.venue.city : undefined;
+function cleanEventUrl(rawUrl) {
+  const eventUrl = firstNonEmptyString(rawUrl);
+
+  if (!eventUrl) {
+    throw new ValidationError(
+      'event.url is required. GTM must send the full event page URL.'
+    );
+  }
+
+  let parsedEventUrl;
+
+  try {
+    parsedEventUrl = new URL(eventUrl);
+  } catch {
+    throw new ValidationError(
+      'event.url must be a valid absolute URL'
+    );
+  }
+
+  if (
+    parsedEventUrl.protocol !== 'http:' &&
+    parsedEventUrl.protocol !== 'https:'
+  ) {
+    throw new ValidationError(
+      'event.url must use HTTP or HTTPS'
+    );
+  }
+
+  if (
+    /\/experiences\/?$/i.test(
+      parsedEventUrl.pathname
+    )
+  ) {
+    throw new ValidationError(
+      'event.url must be the full individual event URL, not the generic experiences page'
+    );
+  }
+
+  // Never save GTM Preview parameters as part of the public event URL.
+  [
+    'gtm_debug',
+    'gtm_auth',
+    'gtm_preview',
+    'gtm_cookies_win',
+  ].forEach((param) => {
+    parsedEventUrl.searchParams.delete(param);
+  });
+
+  return parsedEventUrl.toString();
+}
+
+function cleanThumbnailUrl(rawUrl) {
+  const thumbnailUrl =
+    firstNonEmptyString(rawUrl);
+
+  if (!thumbnailUrl) {
+    return '';
+  }
+
+  let parsedThumbnailUrl;
+
+  try {
+    parsedThumbnailUrl =
+      new URL(thumbnailUrl);
+  } catch {
+    throw new ValidationError(
+      'event.thumbnail_url must be a valid absolute URL'
+    );
+  }
+
+  if (
+    parsedThumbnailUrl.protocol !== 'http:' &&
+    parsedThumbnailUrl.protocol !== 'https:'
+  ) {
+    throw new ValidationError(
+      'event.thumbnail_url must use HTTP or HTTPS'
+    );
+  }
+
+  return parsedThumbnailUrl.toString();
+}
+
+/**
+ * Build and validate the Hive event object.
+ *
+ * Expected input:
+ * {
+ *   event_id,
+ *   name,
+ *   start_at,
+ *   end_at,
+ *   url or event_url,
+ *   thumbnail_url or legacy image_url,
+ *   timezone,
+ *   venue,
+ *   tiers
+ * }
+ */
+export function buildEventPayload(ev) {
+  if (
+    !ev ||
+    typeof ev !== 'object' ||
+    Array.isArray(ev)
+  ) {
+    throw new ValidationError(
+      'event object is required'
+    );
+  }
+
+  const name =
+    firstNonEmptyString(ev.name);
+
+  const startAt =
+    firstNonEmptyString(ev.start_at);
+
+  if (!name) {
+    throw new ValidationError(
+      'event.name is required'
+    );
+  }
+
+  if (!startAt) {
+    throw new ValidationError(
+      'event.start_at is required'
+    );
+  }
+
+  if (Number.isNaN(Date.parse(startAt))) {
+    throw new ValidationError(
+      'event.start_at must be a valid ISO 8601 date'
+    );
+  }
+
+  const eventUrl = cleanEventUrl(
+    firstNonEmptyString(
+      ev.event_url,
+      ev.url
+    )
+  );
+
+  const city =
+    ev.venue &&
+    typeof ev.venue === 'object' &&
+    isNonEmpty(ev.venue.city)
+      ? ev.venue.city.trim()
+      : undefined;
+
+  /*
+   * Occurrence-level event id: source UUID + start date.
+   *
+   * Easol reuses one product-level UUID across every date of a
+   * recurring show, so the UUID alone collapses separate shows into a
+   * single Hive event. The date must therefore be part of the key.
+   *
+   * The name is deliberately NOT part of the key: the same show
+   * arrives under several name forms (with and without a trailing
+   * date suffix, with and without a theme prefix), which would split
+   * one occurrence across multiple ids.
+   *
+   * buildEventId (name + date) remains the fallback for payloads that
+   * carry no source id at all.
+   */
+  const sourceId = firstNonEmptyString(
+    ev.event_id,
+    ev.product_id
+  );
+
+  const eventId = sourceId
+    ? buildOccurrenceId(sourceId, startAt)
+    : buildEventId(name, startAt, city);
+
   const event = {
-    // Prefer the explicit event id (Easol's ticketed_event_id / dataLayer item_id UUID);
-    // fall back to a deterministic slug only when it's missing.
-    event_id: isNonEmpty(ev.event_id) ? ev.event_id : buildEventId(ev.name, ev.start_at, city),
-    name: ev.name,
-    event_url: ev.url,
-    start_at: ev.start_at,
+    event_id: eventId,
+    name,
+    event_url: eventUrl,
+    start_at: startAt,
     updated_at: new Date().toISOString(),
   };
-  if (isNonEmpty(ev.end_at)) event.end_at = ev.end_at;
-  event.timezone = isNonEmpty(ev.timezone) ? ev.timezone : 'America/Toronto';
-  if (ev.venue && isNonEmpty(ev.venue.name)) event.venue = ev.venue;
-  if (Array.isArray(ev.tiers) && ev.tiers.length) event.tiers = ev.tiers;
+
+  if (isNonEmpty(ev.end_at)) {
+    const endAt = ev.end_at.trim();
+
+    if (Number.isNaN(Date.parse(endAt))) {
+      throw new ValidationError(
+        'event.end_at must be a valid ISO 8601 date'
+      );
+    }
+
+    event.end_at = endAt;
+  }
+
+  /*
+   * Hive requires the event image under `thumbnail_url`.
+   * Prefer the corrected GTM property and keep `image_url`
+   * only as a backward-compatible input fallback.
+   */
+  const thumbnailUrl = cleanThumbnailUrl(
+    firstNonEmptyString(
+      ev.thumbnail_url,
+      ev.image_url
+    )
+  );
+
+  if (thumbnailUrl) {
+    event.thumbnail_url = thumbnailUrl;
+  }
+
+  /*
+   * Never assume a default timezone.
+   * Only include it when the source provides the real event timezone.
+   */
+  if (isNonEmpty(ev.timezone)) {
+    event.timezone =
+      ev.timezone.trim();
+  }
+
+  if (
+    ev.venue &&
+    typeof ev.venue === 'object' &&
+    !Array.isArray(ev.venue) &&
+    isNonEmpty(ev.venue.name)
+  ) {
+    event.venue =
+      Object.assign({}, ev.venue);
+  }
+
+  if (
+    Array.isArray(ev.tiers) &&
+    ev.tiers.length
+  ) {
+    event.tiers = ev.tiers;
+  }
+
   return event;
 }
 
 /**
  * Build a Hive order object.
+ *
  * @param {object} input {
- *   status, order_id, event, user, items, value
+ *   status,
+ *   order_id,
+ *   event,
+ *   user,
+ *   items,
+ *   value,
+ *   currency
  * }
- *   status   : "started" (abandoned cart) | "completed" | "cancelled" | "pending" | "partial_payment"
- *   order_id : stable id you generated in the browser (same id for started -> completed)
- *   event    : same shape as buildEventPayload input
- *   user     : { email, phone_number, first_name, last_name, is_email_opt_in, ... }
- *   items    : [{ item_id, tier_id, tier_name, price, quantity, status }]
- *   value    : optional order total (used to synthesize an item if none provided)
+ *
+ * status:
+ * "started" | "completed" | "cancelled" |
+ * "pending" | "partial_payment"
  */
 export function buildOrderPayload(input) {
-  const { status, order_id, event, user, items, value } = input || {};
-
-  const validStatuses = ['started', 'completed', 'cancelled', 'pending', 'partial_payment'];
-  if (!validStatuses.includes(status)) {
-    throw new ValidationError('status must be one of: ' + validStatuses.join(', '));
-  }
-  if (!isNonEmpty(order_id)) throw new ValidationError('order_id is required');
-  if (!user || (!isNonEmpty(user.email) && !isNonEmpty(user.phone_number))) {
-    throw new ValidationError('user.email or user.phone_number is required');
-  }
-  if (!event || !isNonEmpty(event.name) || !isNonEmpty(event.start_at)) {
-    throw new ValidationError('event.name and event.start_at are required to map the order');
-  }
-
-  const city = event.venue && event.venue.city ? event.venue.city : undefined;
-  const event_id = isNonEmpty(event.event_id) ? event.event_id : buildEventId(event.name, event.start_at, city);
-
-  // Normalize items; the live API REQUIRES item_id on each line item.
-  let normItems;
-  if (Array.isArray(items) && items.length) {
-    normItems = items.map((it, i) => ({
-      item_id: isNonEmpty(it.item_id) ? it.item_id : 'item_' + (i + 1),
-      tier_id: it.tier_id,
-      tier_name: it.tier_name,
-      price: Number(it.price || 0),
-      quantity: Number(it.quantity || 1),
-      status: it.status || (status === 'completed' ? 'completed' : 'started'),
-    }));
-  } else {
-    // Abandoned carts often have no line items yet — synthesize one from value.
-    normItems = [{
-      item_id: 'item_1',
-      tier_name: 'General Admission',
-      price: Number(value || 0),
-      quantity: 1,
-      status: status === 'completed' ? 'completed' : 'started',
-    }];
-  }
-
-  const now = new Date().toISOString();
-  const order = {
+  const {
+    status,
     order_id,
-    event_id,
+    event,
+    user,
+    items,
+    value,
+    currency,
+  } = input || {};
+
+  const validStatuses = [
+    'started',
+    'completed',
+    'cancelled',
+    'pending',
+    'partial_payment',
+  ];
+
+  if (!validStatuses.includes(status)) {
+    throw new ValidationError(
+      'status must be one of: ' +
+      validStatuses.join(', ')
+    );
+  }
+
+  if (!isNonEmpty(order_id)) {
+    throw new ValidationError(
+      'order_id is required'
+    );
+  }
+
+  if (
+    !user ||
+    (
+      !isNonEmpty(user.email) &&
+      !isNonEmpty(user.phone_number)
+    )
+  ) {
+    throw new ValidationError(
+      'user.email or user.phone_number is required'
+    );
+  }
+
+  if (
+    !event ||
+    !isNonEmpty(event.name) ||
+    !isNonEmpty(event.start_at)
+  ) {
+    throw new ValidationError(
+      'event.name and event.start_at are required to map the order'
+    );
+  }
+
+  const city =
+    event.venue &&
+    event.venue.city
+      ? event.venue.city
+      : undefined;
+
+  /*
+   * Must derive identically to buildEventPayload, or orders will
+   * reference an event id that does not exist in Hive.
+   */
+  const sourceId = firstNonEmptyString(
+    event.event_id,
+    event.product_id
+  );
+
+  const eventId = sourceId
+    ? buildOccurrenceId(sourceId, event.start_at)
+    : buildEventId(
+        event.name,
+        event.start_at,
+        city
+      );
+
+  // Normalize items; the live API requires item_id on every line item.
+  let normalizedItems;
+
+  if (
+    Array.isArray(items) &&
+    items.length
+  ) {
+    normalizedItems = items.map(
+      (item, index) => ({
+        item_id:
+          isNonEmpty(item.item_id)
+            ? item.item_id.trim()
+            : 'item_' + (index + 1),
+
+        tier_id:
+          isNonEmpty(item.tier_id)
+            ? item.tier_id.trim()
+            : undefined,
+
+        tier_name:
+          isNonEmpty(item.tier_name)
+            ? item.tier_name.trim()
+            : undefined,
+
+        price:
+          Number(item.price ?? 0),
+
+        quantity:
+          Number(item.quantity ?? 1),
+
+        status:
+          item.status ||
+          (
+            status === 'completed'
+              ? 'completed'
+              : 'started'
+          ),
+      })
+    );
+  } else {
+    normalizedItems = [
+      {
+        item_id: 'item_1',
+        tier_name: 'General Admission',
+        price: Number(value || 0),
+        quantity: 1,
+        status:
+          status === 'completed'
+            ? 'completed'
+            : 'started',
+      },
+    ];
+  }
+
+  normalizedItems.forEach((item) => {
+    Object.keys(item).forEach((key) => {
+      if (item[key] === undefined) {
+        delete item[key];
+      }
+    });
+  });
+
+  // Preserve existing IDs and totals. A repeated product ID can represent
+  // multiple units of one tier, but different tiers require real distinct IDs.
+  const byItemId = new Map();
+  for (const item of normalizedItems) {
+    if (!Number.isFinite(item.price) || item.price < 0 ||
+        !Number.isSafeInteger(item.quantity) || item.quantity < 1) {
+      throw new ValidationError('items require a non-negative price and a positive integer quantity');
+    }
+    const previous = byItemId.get(item.item_id);
+    if (!previous) {
+      byItemId.set(item.item_id, { ...item });
+      continue;
+    }
+    if (previous.tier_id !== item.tier_id || previous.tier_name !== item.tier_name ||
+        previous.price !== item.price || previous.status !== item.status) {
+      throw new ValidationError('Duplicate item_id describes different ticket tiers, prices, or statuses; send distinct stable ticket-line IDs');
+    }
+    previous.quantity += item.quantity;
+    if (!Number.isSafeInteger(previous.quantity)) {
+      throw new ValidationError('Combined item quantity exceeds the supported integer range');
+    }
+  }
+  normalizedItems = [...byItemId.values()];
+
+  const now =
+    new Date().toISOString();
+
+  const order = {
+    order_id: order_id.trim(),
+    event_id: eventId,
     status,
     user: {},
-    items: normItems,
-    created_at: isNonEmpty(input.created_at) ? input.created_at : now,
+    items: normalizedItems,
+
+    created_at:
+      isNonEmpty(input.created_at)
+        ? input.created_at.trim()
+        : now,
+
     updated_at: now,
   };
 
-  // Only add user fields if they actually have data
-  if (isNonEmpty(user.email)) order.user.email = user.email.trim();
-  if (isNonEmpty(user.phone_number)) order.user.phone_number = user.phone_number.trim();
-  if (isNonEmpty(user.first_name)) order.user.first_name = user.first_name.trim();
-  if (isNonEmpty(user.last_name)) order.user.last_name = user.last_name.trim();
+  /*
+   * Currency. Without this every figure in Hive is unit-less, and a
+   * NOK sale is indistinguishable from a USD one. The GTM tag has
+   * been sending this field; it was simply being discarded here.
+   */
+  const currencyCode =
+    firstNonEmptyString(currency).toUpperCase();
+
+  if (/^[A-Z]{3}$/.test(currencyCode)) {
+    order.currency = currencyCode;
+  }
+
+  const orderTotal = Number(value);
+
+  const lineSum = order.items.reduce(
+    (sum, line) =>
+      sum +
+      (Number(line.price) || 0) *
+      (Number(line.quantity) || 1),
+    0
+  );
+
+  /*
+   * UK/EU checkouts price the ticket line at 0.00 and put the real
+   * money in add-ons, so without this Hive records a zero-value sale.
+   */
+  if (
+    lineSum === 0 &&
+    Number.isFinite(orderTotal) &&
+    orderTotal > 0
+  ) {
+    order.items[0].price = orderTotal;
+    order.items[0].quantity = 1;
+
+    console.warn(
+      'Zero-priced line items; using order total ' +
+      orderTotal +
+      ' for order ' +
+      order.order_id
+    );
+  }
+
+  if (
+    Number.isFinite(orderTotal) &&
+    orderTotal > 0
+  ) {
+    order.value = orderTotal;
+  }
+
+  if (isNonEmpty(user.email)) {
+    const cleanEmail =
+      user.email.trim().toLowerCase();
+
+    /*
+     * Hive batches are all-or-nothing, so one malformed address
+     * (the PP7-RWLH 422) can reject every order sent with it.
+     */
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail) ||
+      cleanEmail.endsWith('.') || cleanEmail.includes('..')
+    ) {
+      throw new ValidationError(
+        'user.email is not a valid email address'
+      );
+    }
+
+    order.user.email = cleanEmail;
+  }
+
+  if (
+    isNonEmpty(user.phone_number)
+  ) {
+    order.user.phone_number =
+      user.phone_number.trim();
+  }
+
+  if (isNonEmpty(user.first_name)) {
+    order.user.first_name =
+      user.first_name.trim();
+  }
+
+  if (isNonEmpty(user.last_name)) {
+    order.user.last_name =
+      user.last_name.trim();
+  }
+
+  /*
+   * Email consent mapping - Hive-confirmed semantics.
+   *
+   *   checkbox selected      -> send is_email_opt_in: true
+   *   checkbox NOT selected  -> OMIT the field entirely
+   *
+   * Hive updates the contact's subscription state on BOTH true and
+   * false. Sending false for a simply-unchecked checkout box can
+   * unsubscribe an existing subscriber. Unchecked means "no decision
+   * made", not "unsubscribe".
+   *
+   * false is only ever sent when the caller explicitly flags a real
+   * unsubscribe action via user.email_opt_in_explicit === true.
+   */
+  const optInRaw =
+    user.is_email_opt_in !== undefined
+      ? user.is_email_opt_in
+      : user.email_opt_in;
+
+  const optedIn =
+    optInRaw === true ||
+    optInRaw === 'true' ||
+    optInRaw === 1 ||
+    optInRaw === '1';
+
+  const optedOut =
+    optInRaw === false ||
+    optInRaw === 'false' ||
+    optInRaw === 0 ||
+    optInRaw === '0';
+
+  if (optedIn) {
+    order.user.is_email_opt_in = true;
+  } else if (
+    optedOut &&
+    user.email_opt_in_explicit === true
+  ) {
+    // Genuine explicit unsubscribe action, not an unchecked box.
+    order.user.is_email_opt_in = false;
+  }
+  // Otherwise: field omitted, leaving Hive's existing state untouched.
+
+  if (status === 'completed') {
+    order.purchased_at = now;
+  }
+
+  const createdMs = Date.parse(order.created_at);
+  const updatedMs = Date.parse(order.updated_at);
+
+  if (
+    Number.isFinite(createdMs) &&
+    Number.isFinite(updatedMs) &&
+    updatedMs < createdMs
+  ) {
+    order.updated_at = order.created_at;
+  }
   
-  // Hive requires this to be a boolean, never null/undefined
-  order.user.is_email_opt_in = (user.is_email_opt_in === true);
-
-  if (status === 'completed') order.purchased_at = now;
-
-  // Drop undefined user subfields so we don't send empty keys.
-  Object.keys(order.user).forEach((k) => order.user[k] === undefined && delete order.user[k]);
 
   return order;
 }
