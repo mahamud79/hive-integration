@@ -382,10 +382,10 @@ export function buildOrderPayload(input) {
             : undefined,
 
         price:
-          Number(item.price || 0),
+          Number(item.price ?? 0),
 
         quantity:
-          Number(item.quantity || 1),
+          Number(item.quantity ?? 1),
 
         status:
           item.status ||
@@ -418,6 +418,30 @@ export function buildOrderPayload(input) {
       }
     });
   });
+
+  // Preserve existing IDs and totals. A repeated product ID can represent
+  // multiple units of one tier, but different tiers require real distinct IDs.
+  const byItemId = new Map();
+  for (const item of normalizedItems) {
+    if (!Number.isFinite(item.price) || item.price < 0 ||
+        !Number.isSafeInteger(item.quantity) || item.quantity < 1) {
+      throw new ValidationError('items require a non-negative price and a positive integer quantity');
+    }
+    const previous = byItemId.get(item.item_id);
+    if (!previous) {
+      byItemId.set(item.item_id, { ...item });
+      continue;
+    }
+    if (previous.tier_id !== item.tier_id || previous.tier_name !== item.tier_name ||
+        previous.price !== item.price || previous.status !== item.status) {
+      throw new ValidationError('Duplicate item_id describes different ticket tiers, prices, or statuses; send distinct stable ticket-line IDs');
+    }
+    previous.quantity += item.quantity;
+    if (!Number.isSafeInteger(previous.quantity)) {
+      throw new ValidationError('Combined item quantity exceeds the supported integer range');
+    }
+  }
+  normalizedItems = [...byItemId.values()];
 
   const now =
     new Date().toISOString();
@@ -495,7 +519,8 @@ export function buildOrderPayload(input) {
      * (the PP7-RWLH 422) can reject every order sent with it.
      */
     if (
-      !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail)
+      !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(cleanEmail) ||
+      cleanEmail.endsWith('.') || cleanEmail.includes('..')
     ) {
       throw new ValidationError(
         'user.email is not a valid email address'

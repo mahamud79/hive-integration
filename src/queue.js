@@ -18,6 +18,24 @@ const TICK_MS = Number(process.env.HIVE_WORKER_TICK_MS || 1000);
 
 export const queueEnabled = Boolean(REDIS_URL && REDIS_TOKEN);
 
+// Only the specific event dependency error is recoverable here. An invalid
+// email or duplicate item ID must not turn into a repeatedly retried 422.
+export function isMissingEventError(err, job) {
+  if (err.status !== 422 || job.kind !== 'order' || !job.data?.event ||
+      job.data.event.event_id !== job.data.order?.event_id) return false;
+  const errors = err.response?.orders;
+  if (!errors || typeof errors !== 'object') return false;
+  const rows = Object.values(errors);
+  return rows.length === 1 && rows.every(row =>
+    row && Object.keys(row).length === 1 && Array.isArray(row.event_id) &&
+    row.event_id.length > 0 && row.event_id.every(message =>
+      typeof message === 'string' && message.includes(
+        "No event exists with event_id '" + job.data.order.event_id + "'"
+      )
+    )
+  );
+}
+
 async function redis(command) {
   const res = await fetch(REDIS_URL, {
     method: 'POST',
@@ -68,7 +86,7 @@ async function deliver(job) {
   const { event, order } = job.data;
 
   if (event) {
-    if (await needsEventPush(event.event_id)) {
+    if (job.force_event || await needsEventPush(event.event_id)) {
       await pushEvents([event]);
       await markEventSent(event.event_id);
     }
@@ -102,7 +120,7 @@ async function requeue(job, err) {
   if (attempts >= MAX_ATTEMPTS) {
     await redis([
       'RPUSH', DEAD_KEY,
-      JSON.stringify({ ...job, attempts, last_error: err.message }),
+      JSON.stringify({ ...job, attempts, last_error: err.message, response: err.response || null }),
     ]);
 
     console.error('DEAD LETTER ' + label + ': ' + err.message);
@@ -119,7 +137,7 @@ async function requeue(job, err) {
 
   await redis([
     'ZADD', QUEUE_KEY, String(Date.now() + delayMs + jitter),
-    JSON.stringify({ ...job, attempts, last_error: err.message }),
+    JSON.stringify({ ...job, attempts, last_error: err.message, response: err.response || null }),
   ]);
 
   console.warn(
@@ -153,6 +171,14 @@ async function drainOnce() {
       await deliver(job);
       console.log('DELIVERED ' + job.kind + ' ' + job.id);
     } catch (err) {
+      if (isMissingEventError(err, job)) {
+        // Recreate/reassert the dependency even if its recent-send cache is set.
+        // Existing attempt limits still apply. No historical dead jobs are read.
+        await requeue({ ...job, force_event: true }, {
+          ...err, message: err.message, retryAfter: 60,
+        });
+        continue;
+      }
       // Validation problems will never succeed; don't retry them forever.
       if (err.status && err.status >= 400 && err.status < 500 && err.status !== 429) {
         await redis([
